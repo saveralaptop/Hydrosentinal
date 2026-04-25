@@ -168,13 +168,20 @@ const TEAM = [
     name: "Nikhil Kumar",
     role: "AI + Backend",
     img: "/team1.jpg",
-    intro: "Expert in AI systems and backend architecture",
+    intro:
+      "This is Nikhil, a passionate AI developer. He is responsible for developing the AI models that analyze water quality data and provide insights to users. With a beginner's background in machine learning and data science, Nikhil ensures that HydroSentinel delivers accurate and actionable information about water safety.",
+    github: "https://github.com/NIKHILKUMAR-186",
+    linkedin: "https://www.linkedin.com/in/nikhil-kumar-b288a7303/",
   },
+
   {
     name: "Savera",
     role: "Frontend + UI",
     img: "/team2.jpg",
-    intro: "Expert in AI systems and backend architecture",
+    intro:
+      "This is Savera, a talented frontend developer with a keen eye for design. He is responsible for creating an intuitive and user-friendly interface for HydroSentinel. With a strong foundation in React and UI/UX principles, Savera ensures that users can easily navigate and interact with the application.",
+    github: "https://github.com/SAVERA-123",
+    linkedin: "https://www.linkedin.com/in/savera-456/",
   },
   {
     name: "Member 3",
@@ -221,35 +228,185 @@ type Reading = {
   created_at: string;
 };
 
+type TeamMember = {
+  name: string;
+  role: string;
+  img: string;
+  intro: string;
+  github?: string;
+  linkedin?: string;
+};
+
 const Index = () => {
   const [reading, setReading] = useState<Reading | null>(null);
-  const [history, setHistory] = useState<Reading[]>([]);
   const [quote, setQuote] = useState(WATER_QUOTES[0]);
-  const [selectedMember, setSelectedMember] = useState<any>(null);
+  const [selectedMember, setSelectedMember] = useState<TeamMember | null>(null);
   const [simulatorRunning, setSimulatorRunning] = useState(true);
   const [activeFeature, setActiveFeature] = useState<number | null>(null);
-  const [selectedFeature, setSelectedFeature] = useState<any>(null);
   const [expandedFeature, setExpandedFeature] = useState<number | null>(null);
+  const [prediction, setPrediction] = useState<string | null>(null);
+
+  const fetchLatest = async () => {
+    const { data, error } = await supabase.functions.invoke("latest");
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+
+    if (data?.reading) {
+      setReading(data.reading);
+
+      setHistory((prev) => {
+        const newData = [...prev, data.reading];
+        return newData.slice(-10);
+      });
+    }
+  };
+
+  const [history, setHistory] = useState(
+    Array.from({ length: 10 }, () => ({
+      tds: 500,
+      ph: 7,
+      turbidity: 5,
+    })),
+  );
+
+  const normalizeTDS = (tds: number) => tds / 1000;
+  const normalizePH = (ph: number) => Math.abs(ph - 7);
+  const getCurrentScore = () => {
+    if (!reading) return 0;
+    return getWaterScore(reading.tds, reading.ph);
+  };
+  const getAIAction = useCallback(() => {
+    if (!history.length) return "";
+
+    const last = history[history.length - 1];
+
+    // 🚨 High TDS
+    if (last.tds > 1000) {
+      return "💡 Use RO filter or boil water before drinking.";
+    }
+
+    // ⚠️ pH issue
+    if (last.ph < 6.5) {
+      return "💡 Add alkaline minerals or use a pH filter.";
+    }
+
+    if (last.ph > 8.5) {
+      return "💡 Avoid direct consumption and use neutralizing filter.";
+    }
+
+    // 🌫️ Turbidity issue
+    if (last.turbidity > 25) {
+      return "💡 Use sediment filter or boil water to remove impurities.";
+    }
+
+    // ✅ Safe
+    return safeMessages[Math.floor(Math.random() * safeMessages.length)];
+  }, [history]);
+
+  const safeMessages = [
+    "💡 Water is safe. No action needed.",
+    "💡 All parameters stable. You're good to go.",
+    "💡 Safe for drinking and daily use.",
+  ];
+
+  const [action, setAction] = useState("");
 
   useEffect(() => {
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
-  }, []);
+    setAction(getAIAction());
+  }, [getAIAction]);
 
+  const getColor = (score: number) => {
+    if (score > 1) return "text-red-400"; // danger
+    if (score > 0.7) return "text-yellow-400"; // warning
+    return "text-green-400"; // safe
+  };
+
+  const getWaterScore = (tds: number, ph: number) => {
+    const tdsScore = normalizeTDS(tds);
+    const phScore = normalizePH(ph);
+
+    // weight assign karo
+    const score = 0.6 * tdsScore + 0.4 * phScore;
+
+    return score;
+  };
+
+  const linearRegression = (data: number[]) => {
+    const n = data.length;
+
+    let sumX = 0,
+      sumY = 0,
+      sumXY = 0,
+      sumX2 = 0;
+
+    for (let i = 0; i < n; i++) {
+      const x = i; // time index
+      const y = data[i];
+
+      sumX += x;
+      sumY += y;
+      sumXY += x * y;
+      sumX2 += x * x;
+    }
+
+    const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+    const intercept = (sumY - slope * sumX) / n;
+
+    return { slope, intercept };
+  };
+  const getFinalPrediction = () => {
+    const score = getFutureScore();
+
+    if (!score) return "Not enough data";
+
+    if (score > 1) {
+      return "⚠️ Water quality may degrade in next 2 hours";
+    }
+
+    return "✅ Water likely to remain safe";
+  };
+
+  const predictFuture = (values: number[]) => {
+    if (values.length < 2) return null;
+
+    const { slope, intercept } = linearRegression(values);
+
+    const futureX = values.length + 2; // 2 step ahead
+    const predictedY = slope * futureX + intercept;
+
+    return predictedY;
+  };
+  const getFutureScore = () => {
+    if (history.length < 2) return null;
+
+    const scores = history.map((item) => getWaterScore(item.tds, item.ph));
+
+    return predictFuture(scores); // jo pehle banaya tha
+  };
+
+  const currentScore = getCurrentScore();
+  const futureScore = getFutureScore();
+  const predictionScore = futureScore ?? currentScore;
+  const trend =
+    futureScore !== null && futureScore > currentScore ? "up" : "down";
+  const isUnsafe =
+    currentScore > 0.7 || (futureScore !== null && futureScore > 0.7);
   useEffect(() => {
-  window.scrollTo({
-    top: 0,
-    behavior: "smooth",
-  });
-}, []);
-  // const [history, setHistory] = useState<History>([]);
+    const result = getPrediction();
+    setPrediction(result);
+  }, [history]);
 
-  const graphData = history.map((item, i) => ({
-    time: `#${i + 1}`,
-    ph: item.ph,
+  const tdsData = history.map((item, i) => ({
+    time: i + 1,
     tds: item.tds,
+  }));
+
+  const phTurbidityData = history.map((item, i) => ({
+    time: i + 1,
+    ph: item.ph,
     turbidity: item.turbidity,
   }));
 
@@ -287,31 +444,7 @@ const Index = () => {
     }
   }, [reading]);
 
-  const fetchLatest = useCallback(async () => {
-    const { data, error } = await supabase.functions.invoke("latest");
-
-    if (error) {
-      console.error(error);
-      return;
-    }
-
-    if (data?.reading) {
-      setReading(data.reading as Reading);
-
-      setHistory((prev) => {
-        const updated = [...prev, data.reading];
-        return updated.slice(-5);
-      });
-    }
-  }, []);
-
   const alertPlayedRef = useRef(false);
-
-  useEffect(() => {
-    fetchLatest();
-    const id = window.setInterval(fetchLatest, 3000);
-    return () => window.clearInterval(id);
-  }, [fetchLatest]);
 
   useEffect(() => {
     if (!reading) return;
@@ -330,11 +463,178 @@ const Index = () => {
     }
   }, [reading]);
 
+  // useEffect(() => {
+  //   setHistory([
+  //     { tds: 500, ph: 7, turbidity: 5 }
+  //   ]);
+  // }, []);
+
+  const clamp = (val: number, min: number, max: number) =>
+    Math.max(min, Math.min(max, val));
+
+  // const newReading = {
+  //   tds: danger ? last.tds + 100 : last.tds + (Math.random() * 20 - 10),
+  //   ph: danger ? last.ph + 0.5 : last.ph + (Math.random() * 0.1 - 0.05),
+  //   turbidity: danger ? last.turbidity + 5 : last.turbidity + (Math.random() * 1 - 0.5),
+  // };
+  // useEffect(() => {
+  //   if (!simulatorRunning) return;
+
+  //   const interval = setInterval(() => {
+  //     setHistory((prev) => {
+  //       const last = prev[prev.length - 1] || {
+  //         tds: 500,
+  //         ph: 7,
+  //         turbidity: 5,
+  //       };
+
+  //       const clamp = (val, min, max) => Math.max(min, Math.min(max, val));
+
+  //       // 🔥 trend logic
+  //       const tdsTrend = Math.random() > 0.3 ? 1 : -1;
+  //       const phTrend = Math.random() > 0.3 ? 1 : -1;
+  //       const turbidityTrend = Math.random() > 0.3 ? 1 : -1;
+
+  //       // 🔥 danger mode
+  //       const danger = Math.random() < 0.2;
+
+  //       const newReading = {
+  //         tds: clamp(
+  //           danger
+  //             ? last.tds + 100
+  //             : last.tds + tdsTrend * (Math.random() * 20),
+  //           100,
+  //           1200,
+  //         ),
+
+  //         ph: clamp(
+  //           danger ? last.ph + 0.5 : last.ph + phTrend * (Math.random() * 0.1),
+  //           6,
+  //           9,
+  //         ),
+
+  //         turbidity: clamp(
+  //           danger
+  //             ? last.turbidity + 5
+  //             : last.turbidity + turbidityTrend * (Math.random() * 1),
+  //           1,
+  //           50,
+  //         ),
+  //       };
+  //       const status =
+  //         newReading.tds > 1000 || newReading.turbidity > 25
+  //           ? "NOT SAFE"
+  //           : "SAFE";
+
+  //       const fullReading: Reading = {
+  //         id: crypto.randomUUID(),
+  //         tds: newReading.tds,
+  //         ph: newReading.ph,
+  //         turbidity: newReading.turbidity,
+  //         temperature: 25 + Math.random() * 5,
+  //         status,
+  //         created_at: new Date().toISOString(),
+  //       };
+
+  //       setReading(fullReading);
+
+  //       return [...prev.slice(-10), fullReading];
+  //     });
+  //   }, 3000);
+
+  //   return () => clearInterval(interval);
+  // }, [simulatorRunning]);
+
+  useEffect(() => {
+    if (simulatorRunning) {
+      const generateRandomReading = () => {
+        setHistory((prev) => {
+          const last = prev[prev.length - 1] || {
+            tds: 500,
+            ph: 7,
+            turbidity: 5,
+          };
+
+          const danger = Math.random() < 0.35;
+          const shock = Math.random() < 0.15;
+          const tdsTrend = Math.random() > 0.5 ? 1 : -1;
+          const phTrend = Math.random() > 0.5 ? 1 : -1;
+          const turbidityTrend = Math.random() > 0.5 ? 1 : -1;
+
+          const tdsStep = Math.random() * 45 + 10;
+          const phStep = Math.random() * 0.22 + 0.04;
+          const turbidityStep = Math.random() * 2.4 + 0.2;
+
+          const next = {
+            tds: clamp(
+              shock
+                ? last.tds + (Math.random() > 0.5 ? 220 : -220)
+                : danger
+                  ? last.tds + 120
+                  : last.tds + tdsTrend * tdsStep,
+              100,
+              1200,
+            ),
+            ph: clamp(
+              shock
+                ? last.ph + (Math.random() > 0.5 ? 0.8 : -0.8)
+                : danger
+                  ? last.ph + 0.6
+                  : last.ph + phTrend * phStep,
+              6,
+              9,
+            ),
+            turbidity: clamp(
+              shock
+                ? last.turbidity + (Math.random() > 0.5 ? 12 : -12)
+                : danger
+                  ? last.turbidity + 6
+                  : last.turbidity + turbidityTrend * turbidityStep,
+              1,
+              50,
+            ),
+          };
+
+          const randomReading: Reading = {
+            id: crypto.randomUUID(),
+            ph: next.ph,
+            tds: next.tds,
+            turbidity: next.turbidity,
+            temperature: clamp(25 + (Math.random() * 10 - 5), 18, 38),
+            status:
+              next.ph < 6.5 ||
+              next.ph > 8.5 ||
+              next.tds > 1000 ||
+              next.turbidity > 25
+                ? "NOT SAFE"
+                : "SAFE",
+            created_at: new Date().toISOString(),
+          };
+
+          setReading(randomReading);
+          return [...prev, next].slice(-10);
+        });
+      };
+
+      generateRandomReading();
+      const interval = setInterval(generateRandomReading, 3000);
+      return () => clearInterval(interval);
+    }
+
+    fetchLatest();
+    const interval = setInterval(fetchLatest, 3000);
+    return () => clearInterval(interval);
+  }, [simulatorRunning]);
+
   const phOut = reading ? reading.ph < 6.5 || reading.ph > 8.5 : false;
   const tdsOut = reading ? reading.tds > 1000 : false;
   const turbOut = reading ? reading.turbidity > 25 : false;
 
-  const getPrediction = () => {
+  useEffect(() => {
+    window.scrollTo(0, 0); // ✅ no animation
+  }, []);
+
+  const getPrediction = useCallback(() => {
     if (history.length < 2) return null;
 
     const last = history[history.length - 1];
@@ -352,7 +652,7 @@ const Index = () => {
     }
 
     return null;
-  };
+  }, [history]);
 
   return (
     <main className="min-h-screen bg-gradient-hero text-foreground">
@@ -502,7 +802,7 @@ const Index = () => {
                 </h3>
 
                 {/* short intro on hover */}
-                <div
+                {/* <div
                   className="
 opacity-0 group-hover:opacity-100
 transition duration-300
@@ -510,7 +810,7 @@ mt-3 text-sm text-gray-300
 "
                 >
                   {member.intro}
-                </div>
+                </div> */}
               </div>
             ))}
           </div>
@@ -552,6 +852,29 @@ mt-3 text-sm text-gray-300
                 <p className="mt-4 text-sm text-muted-foreground leading-relaxed">
                   {selectedMember.intro}
                 </p>
+                <div className="mt-6 p-4 border rounded-xl animate-fade-in">
+                  <div
+                    className={`cursor-pointer ${selectedMember === selectedMember ? "border-blue-500" : ""}`}
+                  >
+                    <a
+                      href={selectedMember.github}
+                      target="_blank"
+                      className="text-blue-400 hover:underline "
+                    >
+                      🔗 GitHub
+                    </a>
+
+                    {" | "}
+
+                    <a
+                      href={selectedMember.linkedin}
+                      target="_blank"
+                      className="text-blue-400 hover:underline"
+                    >
+                      🔗 LinkedIn
+                    </a>
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -648,12 +971,8 @@ ${
             >
               <div className="flex flex-col items-center md:items-start w-[140px] shrink-0">
                 <motion.div
-                  animate={
-  expandedFeature === i
-    ? { x: -25}
-    : { x: 0}
-}
-                  transition={{ type: "spring", stiffness: 300  ,damping: 15}}
+                  animate={expandedFeature === i ? { x: -25 } : { x: 0 }}
+                  transition={{ type: "spring", stiffness: 300, damping: 15 }}
                   className="text-3xl mb-2"
                 >
                   {feature.icon}
@@ -674,7 +993,7 @@ ${
                   <motion.div
                     initial={{ opacity: 0, x: 60 }}
                     animate={{ opacity: 1, x: 0 }}
-                    transition={{ duration: 0.4 , ease: "easeOut" }}
+                    transition={{ duration: 0.4, ease: "easeOut" }}
                     className="flex-1 w-full max-w-[600px] text-left bg-white/5 p-3 rounded-xl border border-white/10 shadow-xl backdrop-blur-sm"
                   >
                     <p className="text-sm text-gray-300 mb-3">
@@ -701,17 +1020,17 @@ ${
 
         {/* Status */}
 
-        <StatusBanner
-          status={reading?.status}
-          updatedAt={reading?.created_at}
-          simulatorRunning={simulatorRunning}
-        />
-        {reading?.status === "NOT SAFE" && (
-          <div className="mt-4 rounded-xl bg-red-500/20 border border-red-500 p-4 text-red-300 font-semibold animate-pulse">
-            🚨 Warning: Water is NOT SAFE! Do not drink. Use filtration or
-            boiling.
-          </div>
-        )}
+        <div id="prototype">
+          <StatusBanner
+            status={reading?.status}
+            updatedAt={reading?.created_at}
+            simulatorRunning={simulatorRunning}
+          />
+        </div>
+        <button onClick={() => setSimulatorRunning((prev) => !prev)}>
+          {simulatorRunning ? "Stop Simulator" : "Start Simulator"}
+        </button>
+
         {reading &&
           (reading.ph < 6.5 ||
             reading.ph > 8.5 ||
@@ -727,10 +1046,7 @@ ${
 
         {/* Grid */}
         <div className="mt-6 grid gap-6 lg:grid-cols-3">
-          <section
-            id="prototype"
-            className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:col-span-2"
-          >
+          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:col-span-2">
             <SensorCard
               label="pH"
               // value={reading?.ph}
@@ -769,25 +1085,110 @@ ${
             <ChatPanel />
           </aside>
         </div>
-        <div className="mt-10 p-6 rounded-2xl bg-card border border-border shadow-lg">
-          <h2 className="text-lg font-semibold mb-2">
-            📊 Water Trends Analysis
-          </h2>
 
-          <WaterGraph data={graphData} />
-          {getPrediction() && (
-            <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm font-medium animate-pulse">
-              ⚠️ {getPrediction()}
+        <div className="flex flex-col gap-6 mt-6">
+          {/* LEFT: GRAPH */}
+          <div className="bg-black/20 p-4 rounded-xl">
+            <h2 className="text-lg font-semibold mb-2">
+              📊 Water Trends Analysis
+            </h2>
+            {/* <WaterGraph data={graphData} />
+             */}
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+              {/* 🔵 TDS GRAPH */}
+              <div className="p-4 rounded-xl border bg-black/20">
+                <h2 className="text-lg font-bold text-blue-400 mb-2">
+                  📊 TDS Levels
+                </h2>
+
+                <WaterGraph data={tdsData} type="tds" />
+              </div>
+
+              {/* 🟢 pH + Turbidity GRAPH */}
+              <div className="p-4 rounded-xl border bg-black/20">
+                <h2 className="text-lg font-bold text-green-400 mb-2">
+                  🌊 pH & Turbidity
+                </h2>
+
+                <WaterGraph data={phTurbidityData} type="ph" />
+              </div>
             </div>
-          )}
-
-          <p className="mt-4 text-sm text-muted-foreground">
-            This graph visualizes real-time trends in water quality parameters
-            like pH, TDS, and turbidity. AI analyzes these trends to detect
-            anomalies and predict potential safety risks before they occur.
-          </p>
+            <p className="mt-4 text-sm text-muted-foreground">
+              This graph visualizes real-time trends in water quality parameters
+              like pH, TDS, and turbidity. AI analyzes these trends to detect
+              anomalies and predict potential safety risks before they occur.
+            </p>
+          </div>
         </div>
+        <div className="mt-6"> </div>
+        {/* score AI INSIGHTS */}
+        
 
+        <div className="bg-black/20 p-4 rounded-xl">
+          <div className="flex flex-col gap-4">
+            {/* 🔮 Prediction */}
+            <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500 space-y-3">
+              <h2 className="text-lg font-bold text-blue-400">🔮 SCORE</h2>
+
+              <div className="flex justify-between w-full">
+                <p className="text-xl mt-2">Current Water Score</p>
+
+                <h2
+                  className={`text-xl mt-2 ${
+                    currentScore > 0.7 ? "text-green-400" : "text-red-400"
+                  }`}
+                >
+                  {currentScore.toFixed(2)}
+                </h2>
+
+                
+                <p className="text-xl mt-2">||</p>
+                <p className="text-xl mt-2">Prediction after 2 hours</p>
+
+                <h2
+                  className={`text-xl mt-2 ${
+                    predictionScore > currentScore
+                      ? "text-red-400"
+                      : "text-green-400"
+                  }`}
+                >
+                  {predictionScore.toFixed(2)}
+                </h2>
+
+               
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1 rounded-full bg-green-500/20 text-green-400 text-sm">
+                  ✅ Safe
+                </span>
+                <span className="ml-auto text-right">
+                  {trend === "up" ? "📈 Getting Worse" : "📉 Improving"}
+                </span>
+              </div>
+            </div>
+
+            
+            {reading?.status === "NOT SAFE" && (
+              <div className="mt-4 rounded-xl bg-red-500/20 border border-red-500 p-4 text-red-300 font-semibold animate-pulse">
+                <h2 className="text-lg font-bold text-green-400">🚨 Warning</h2>
+                Water is NOT SAFE! Do not drink. Use filtration or boiling.
+              </div>
+            )}
+            <div className="p-4 rounded-xl bg-green-500/10 border border-green-500">
+              <h2 className="text-lg font-bold text-green-400">
+                Recommended Action
+              </h2>
+              <p className="mt-2">{action}</p>
+
+              {/* <p className="mt-2">No action needed. Water is safe for use.</p> */}
+            </div>
+
+            {/* <p className="mt-2">No action needed. Water is safe for use.</p> */}
+          </div>
+        </div>
+      </div>
+      {/* <div className="mt-10">
         <footer className="mt-10 rounded-2xl border border-border bg-card/60 p- text-xs text-muted-foreground">
           <p className="text-xl font-semibold tracking-wide text-primary">
             💧 {quote}
@@ -807,7 +1208,7 @@ ${
 
           <div className="mt-1"></div>
         </footer>
-      </div>
+      </div> */}
     </main>
   );
 };
