@@ -3,7 +3,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -24,108 +25,185 @@ const buildFallbackAnswer = (reading: any) => {
   return `Latest reading is NOT SAFE: ${issues.join(", ")}. Avoid drinking until treated and re-tested.`;
 };
 
+const sanitizeAnswer = (raw: string) => {
+  let out = (raw || "").trim();
+
+  // Keep persona fixed even if model drifts.
+  out = out.replace(/hydro\s*sentinel/gi, "HydroSentinal");
+
+  // Remove common markdown emphasis noise from model output.
+  out = out.replace(/\*\*/g, "").replace(/__/g, "");
+
+  return out;
+};
+
+const isIdentityQuestion = (q: string) =>
+  /^(who are you|tum kaun ho|aap kaun ho)\??$/i.test(q.trim());
+
+const isSafeReading = (reading: any) => {
+  if (!reading) return false;
+  return !(reading.ph < 6.5 || reading.ph > 8.5 || reading.tds > 1000 || reading.turbidity > 25);
+};
+
+const buildPolicyFallback = (reading: any) => {
+  if (!reading) {
+    return "I do not have enough water data. Please send a fresh reading. Action: send new sensor data and test again.";
+  }
+
+  if (isSafeReading(reading)) {
+    return "SAFE: Water looks safe for drinking and daily use. Action: keep using it, and test again regularly.";
+  }
+
+  return "NOT SAFE: Water is not safe for drinking right now. Action: use a filter and boil before drinking.";
+};
+
+const enforcePromptPolicy = (raw: string, reading: any, question: string) => {
+  if (isIdentityQuestion(question)) {
+    return "I am HydroSentinal, your water quality assistant.";
+  }
+
+  let out = sanitizeAnswer(raw)
+    .replace(/\b(ai|language model|llm|artificial intelligence)\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  if (!out) {
+    out = buildPolicyFallback(reading);
+  }
+
+  const safe = isSafeReading(reading);
+  if (!/\bSAFE\b|\bNOT SAFE\b/i.test(out)) {
+    out = `${safe ? "SAFE" : "NOT SAFE"}: ${out}`;
+  }
+
+  if (!/(action|boil|filter|avoid|use|test again|do not drink|drink)/i.test(out)) {
+    out += safe
+      ? " Action: keep testing water regularly."
+      : " Action: boil and filter before any drinking use.";
+  }
+
+  const words = out.split(/\s+/).filter(Boolean);
+  if (words.length > 60) {
+    out = words.slice(0, 60).join(" ");
+  }
+
+  return out;
+};
+
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  if (req.method === "OPTIONS")
+    return new Response(null, { headers: corsHeaders });
 
   try {
     const { question } = await req.json();
-    if (typeof question !== "string" || !question.trim()) {
+    const normalizedQuestion = typeof question === "string" ? question.trim() : "";
+
+    if (!normalizedQuestion) {
       return new Response(JSON.stringify({ error: "Question is required" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    const { data: reading } = await supabase
+    // 👉 latest reading fetch karo
+    const { data: readings } = await supabase
       .from("readings")
       .select("*")
       .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
 
-    const context = reading
-      ? `Latest water reading (at ${reading.created_at}):
-- pH: ${reading.ph} (safe range 6.5–8.5)
-- TDS: ${reading.tds} ppm (safe ≤ 1000)
-- Turbidity: ${reading.turbidity} NTU (safe ≤ 25)
-- Temperature: ${reading.temperature} °C
-- Status: ${reading.status}`
+    const latest = readings?.[0];
+
+    const context = latest
+      ? `Latest water reading (at ${latest.created_at}):
+- pH: ${latest.ph} (safe range 6.5–8.5)
+- TDS: ${latest.tds} ppm (safe ≤ 1000)
+- Turbidity: ${latest.turbidity} NTU (safe ≤ 25)
+- Temperature: ${latest.temperature} °C
+- Status: ${latest.status}`
       : "No sensor readings have been received yet.";
 
     const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
     if (!GEMINI_API_KEY) {
-      return new Response(JSON.stringify({ answer: buildFallbackAnswer(reading), reading }), {
+      const answer = buildFallbackAnswer(latest);
+      return new Response(JSON.stringify({ answer, latest }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const aiRes = await fetch(
-  `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`,
-  {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      contents: [
+    // Hard guard for identity queries so persona never drifts.
+    if (isIdentityQuestion(normalizedQuestion)) {
+      return new Response(
+        JSON.stringify({ answer: "I am HydroSentinal, your water quality assistant.", latest }),
         {
-          parts: [
-            {
-              // text: `${context}\n\nQuestion: ${question}`,
-              text: `You are HydroSentinel, an intelligent water quality assistant.
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
 
+    const systemPrompt = `You are HydroSentinal, an intelligent water quality assistant.
+ 
 Your job is:
 1. Analyze water parameters (pH, TDS, turbidity)
 2. Decide if water is SAFE or NOT SAFE
 3. Give clear practical advice
 
 Rules:
-- If SAFE → say safe and where it can be used (drinking, washing, etc.)
-- If NOT SAFE → explain why + give solution (boil, filter, avoid, etc.)
+- If SAFE, say it is safe and where it can be used (drinking, washing, etc.)
+- If NOT SAFE, explain why and suggest a practical solution (boil, filter, avoid, etc.)
 - Keep answer short (max 60 words)
-- Be direct and useful (like a real-world expert)
--Use very simple and clear language.
--Avoid technical words.
--Explain like you are talking to a normal person.
--Keep sentences short and easy to understand.
+- Use very simple and clear language
+- Avoid technical words where possible
+- Always use the latest reading values while answering
+- Always suggest at least one action based on the reading (e.g. "You can drink it", "Avoid using for cooking", "Boil before drinking", "Use a filter", etc.)
+- If asked "who are you", reply: your name and that you are a water quality assistant. Do not mention being an AI or language model.
+Reply in simple Hinglish (mix of Hindi + English).
+Keep tone clear, helpful, and professional.`;
 
--always keep the latest water reading in mind when answering. Here is the latest reading:
--always answer based on the actual numbers, not just general knowledge. If you don't have enough info, say so.
--always consider all parameters together to give a holistic answer.
--always keep answer short and practical, like advice from a water quality expert.
--Always suggest at least one action. For example, if water is not safe to drink, suggest boiling or filtration before use.
+  const userPrompt = `${context}\n\nQuestion: ${normalizedQuestion}\nGive a concise, practical answer based on the above reading.`;
 
-${context}
-
-Question: ${question}`,
+    const aiRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: systemPrompt }],
+          },
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: userPrompt }],
             },
           ],
-        },
-      ],
-    }),
-  }
-);
-
+          generationConfig: {
+            temperature: 0,
+            maxOutputTokens: 140,
+          },
+        }),
+      },
+    );
 
     if (!aiRes.ok) {
       if (aiRes.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again shortly." }), {
-          status: 429,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-        return `NOT SAFE: ${issues.join(", ")}. Avoid drinking. Use filtration or boiling before use.`;
+        return new Response(
+          JSON.stringify({
+            error: "Rate limit exceeded. Please try again shortly.",
+          }),
+          {
+            status: 429,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
       }
-      if (aiRes.status === 402) {
-        return new Response(JSON.stringify({ error: "AI credits exhausted. Add credits in Settings → Workspace → Usage." }), {
-          status: 402,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
+
       const t = await aiRes.text();
       console.error("AI gateway error:", aiRes.status, t);
       return new Response(JSON.stringify({ error: "AI gateway error" }), {
@@ -134,23 +212,26 @@ Question: ${question}`,
       });
     }
 
-    // const json = await aiRes.json();
-    // const answer = json.choices?.[0]?.message?.content ?? "(no response)";
-    const text = await aiRes.text();
-console.log("Gemini raw:", text);
+    const json = await aiRes.json();
+    const rawAnswer =
+      json?.candidates?.[0]?.content?.parts
+        ?.map((p: { text?: string }) => p?.text ?? "")
+        .join("\n")
+        .trim() || buildFallbackAnswer(latest);
 
-const json = JSON.parse(text);
-    const answer = json.candidates?.[0]?.content?.parts?.[0]?.text || "No response";
-    
+    const answer = enforcePromptPolicy(rawAnswer, latest, normalizedQuestion);
 
-    return new Response(JSON.stringify({ answer, reading }), {
+    return new Response(JSON.stringify({ answer, latest }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
     console.error("ask error:", e);
-    return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Unknown" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ error: e instanceof Error ? e.message : "Unknown" }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
   }
 });
