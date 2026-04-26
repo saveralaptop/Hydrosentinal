@@ -927,7 +927,7 @@ mt-3 text-sm text-gray-300
 
         <div className="grid gap-6 md:grid-cols-2"></div>
 
-        <div className=" flex flex-col space-y-4 item-center bg-white/5 backdrop-blur-xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.3)] rounded-2xl p-6">
+        <div className=" flex flex-col space-y-4 items-center bg-white/5 backdrop-blur-xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.3)] rounded-2xl p-6">
           {/* <div className="grid gap-6"> */}
           {FEATURES.map((feature, i) => (
             <motion.div
@@ -951,7 +951,7 @@ mt-3 text-sm text-gray-300
                 damping: 15,
               }}
               className={`
-                
+  w-full
   group
   cursor-pointer
   rounded-2xl
@@ -969,7 +969,13 @@ ${
 }
 `}
             >
-              <div className="flex flex-col items-center md:items-start w-[140px] shrink-0">
+              <div
+                className={`flex flex-col ${
+                  expandedFeature === i
+                    ? "w-[140px] shrink-0 items-start text-left"
+                    : "w-full items-center text-center"
+                }`}
+              >
                 <motion.div
                   animate={expandedFeature === i ? { x: -25 } : { x: 0 }}
                   transition={{ type: "spring", stiffness: 300, damping: 15 }}
