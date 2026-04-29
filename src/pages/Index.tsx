@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { SensorCard } from "@/components/SensorCard";
 import { StatusBanner } from "@/components/StatusBanner";
@@ -6,95 +8,9 @@ import { ChatPanel } from "@/components/ChatPanel";
 import { MachineFleet } from "@/components/MachineFleet";
 import { WaterGraph } from "@/components/WaterGraph";
 import { motion } from "framer-motion";
-
-<section className="relative text-center py-20 overflow-hidden">
-  {/* 🔥 Background Glow */}
-  <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/10 via-blue-500/10 to-green-500/10 blur-3xl animate-pulse" />
-
-  {/* 💧 Floating Circle */}
-  <motion.div
-    className="absolute w-72 h-72 bg-cyan-400/20 rounded-full blur-3xl"
-    animate={{ y: [0, -30, 0] }}
-    transition={{ repeat: Infinity, duration: 6 }}
-    style={{ top: "10%", left: "20%" }}
-  />
-
-  {/* 💧 Floating Circle 2 */}
-  <motion.div
-    className="absolute w-72 h-72 bg-green-400/20 rounded-full blur-3xl"
-    animate={{ y: [0, 30, 0] }}
-    transition={{ repeat: Infinity, duration: 7 }}
-    style={{ bottom: "10%", right: "20%" }}
-  />
-
-  {/* 🚀 MAIN CONTENT */}
-  <div className="relative z-10">
-    {/* 🧠 TITLE */}
-    <motion.h1
-      initial={{ opacity: 0, y: 40 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.8 }}
-      className="text-4xl md:text-6xl font-bold text-white"
-    >
-      💧 HydroSentinel
-    </motion.h1>
-
-    {/* 📊 SUBTITLE */}
-    <motion.p
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.3, duration: 0.8 }}
-      className="mt-4 text-lg text-gray-300 max-w-xl mx-auto"
-    >
-      Real-time AI-powered water quality monitoring system for safer communities
-    </motion.p>
-
-    <div
-      className=" px-7 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-green-500 text-white font-medium shadow-lg transition-all uration-300 hover:shadow-2xl
-"
-    >
-      <motion.button
-        whileHover={{ scale: 1.1 }}
-        whileTap={{ scale: 0.95 }}
-        onClick={() => {
-          document
-            .getElementById("team")
-            ?.scrollIntoView({ behavior: "smooth" });
-        }}
-        className="px-5 py-2 rounded-xl bg-cyan-500 text-white shadow"
-      >
-        👨‍💻 Team
-      </motion.button>
-
-      <motion.button
-        whileHover={{ scale: 1.1 }}
-        whileTap={{ scale: 0.95 }}
-        onClick={() => {
-          document
-            .getElementById("project")
-            ?.scrollIntoView({ behavior: "smooth" });
-        }}
-        className="px-5 py-2 rounded-xl bg-blue-500 text-white shadow"
-      >
-        📄 Project
-      </motion.button>
-
-      <motion.button
-        whileHover={{ scale: 1.1 }}
-        whileTap={{ scale: 0.95 }}
-        onClick={() => {
-          document
-            .getElementById("prototype")
-            ?.scrollIntoView({ behavior: "smooth" });
-        }}
-        className="px-5 py-2 rounded-xl bg-green-500 text-white shadow"
-      >
-        ⚙️ Prototype
-      </motion.button>
-    </div>
-  </div>
-  <div className="mt-6 flex flex-wrap justify-center gap-4"></div>
-</section>;
+import { Button } from "@/components/ui/button";
+import { db } from "../firebase";
+import { collection, getDocs, onSnapshot } from "firebase/firestore";
 
 const FEATURES = [
   {
@@ -237,6 +153,7 @@ type TeamMember = {
 };
 
 const Index = () => {
+  const navigate = useNavigate();
   const [reading, setReading] = useState<Reading | null>(null);
   const [quote, setQuote] = useState(WATER_QUOTES[0]);
   const [selectedMember, setSelectedMember] = useState<TeamMember | null>(null);
@@ -244,6 +161,35 @@ const Index = () => {
   const [activeFeature, setActiveFeature] = useState<number | null>(null);
   const [expandedFeature, setExpandedFeature] = useState<number | null>(null);
   const [prediction, setPrediction] = useState<string | null>(null);
+  const [sensorData, setSensorData] = useState<any[]>([]);
+
+
+  useEffect(() => {
+  const unsubscribe = onSnapshot(collection(db, "waterData"), (snapshot) => {
+    const arr = [];
+    snapshot.forEach((doc) => {
+      arr.push(doc.data());
+    });
+    setSensorData(arr);
+  });
+
+  return () => unsubscribe();
+}, []);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const querySnapshot = await getDocs(collection(db, "waterData"));
+
+      const arr: any[] = [];
+      querySnapshot.forEach((doc) => {
+        arr.push(doc.data());
+      });
+
+      setSensorData(arr);
+    };
+
+    fetchData();
+  }, []);
 
   const fetchLatest = async () => {
     const { data, error } = await supabase.functions.invoke("latest");
@@ -655,6 +601,19 @@ const Index = () => {
 
   return (
     <main className="min-h-screen bg-gradient-hero text-foreground">
+      {/* Navigation Bar */}
+      <nav className="bg-slate-800/50 backdrop-blur-xl border-b border-slate-700 sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8 flex justify-between items-center">
+          <h1 className="text-2xl font-bold text-white">💧 HydroSentinel</h1>
+          <Button
+            onClick={() => navigate("/login")}
+            className="bg-gradient-to-r from-cyan-500 to-green-500 hover:from-cyan-600 hover:to-green-600 text-white font-semibold"
+          >
+            🔐 Login / Sign Up
+          </Button>
+        </div>
+      </nav>
+
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <section className="relative text-center py-20 overflow-hidden">
           {/* 🔥 Background Glow */}
@@ -902,6 +861,17 @@ mt-3 text-sm text-gray-300
             </div>
           )}
         </section>
+        {/* <section className="relative text-center py-20 overflow-hidden">
+          <h1>🔥 Working</h1>
+
+          {sensorData.map((item, i) => (
+            <div key={i}>
+              <p>{item.location}</p>
+              <p>{item.ph}</p>
+              <p>{item.quality}</p>
+            </div>
+          ))}
+        </section> */}
 
         <p className="text-center text-sm text-muted-foreground mt-4 max-w-xl mx-auto">
           We built HydroSentinel to solve real-world water safety issues faced
@@ -1153,7 +1123,6 @@ ${
         </div>
         <div className="mt-6"> </div>
         {/* score AI INSIGHTS */}
-        
 
         <div className="bg-black/20 p-4 rounded-xl">
           <div className="flex flex-col gap-4">
@@ -1172,7 +1141,6 @@ ${
                   {currentScore.toFixed(2)}
                 </h2>
 
-                
                 <p className="text-xl mt-2">||</p>
                 <p className="text-xl mt-2">Prediction after 2 hours</p>
 
@@ -1185,8 +1153,6 @@ ${
                 >
                   {predictionScore.toFixed(2)}
                 </h2>
-
-               
               </div>
               <div className="flex items-center gap-2">
                 <span className="px-3 py-1 rounded-full bg-green-500/20 text-green-400 text-sm">
@@ -1198,7 +1164,6 @@ ${
               </div>
             </div>
 
-            
             {reading?.status === "NOT SAFE" && (
               <div className="mt-4 rounded-xl bg-red-500/20 border border-red-500 p-4 text-red-300 font-semibold animate-pulse">
                 <h2 className="text-lg font-bold text-green-400">🚨 Warning</h2>
