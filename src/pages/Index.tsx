@@ -422,73 +422,7 @@ const Index = () => {
   //   ph: danger ? last.ph + 0.5 : last.ph + (Math.random() * 0.1 - 0.05),
   //   turbidity: danger ? last.turbidity + 5 : last.turbidity + (Math.random() * 1 - 0.5),
   // };
-  // useEffect(() => {
-  //   if (!simulatorRunning) return;
-
-  //   const interval = setInterval(() => {
-  //     setHistory((prev) => {
-  //       const last = prev[prev.length - 1] || {
-  //         tds: 500,
-  //         ph: 7,
-  //         turbidity: 5,
-  //       };
-
-  //       const clamp = (val, min, max) => Math.max(min, Math.min(max, val));
-
-  //       // 🔥 trend logic
-  //       const tdsTrend = Math.random() > 0.3 ? 1 : -1;
-  //       const phTrend = Math.random() > 0.3 ? 1 : -1;
-  //       const turbidityTrend = Math.random() > 0.3 ? 1 : -1;
-
-  //       // 🔥 danger mode
-  //       const danger = Math.random() < 0.2;
-
-  //       const newReading = {
-  //         tds: clamp(
-  //           danger
-  //             ? last.tds + 100
-  //             : last.tds + tdsTrend * (Math.random() * 20),
-  //           100,
-  //           1200,
-  //         ),
-
-  //         ph: clamp(
-  //           danger ? last.ph + 0.5 : last.ph + phTrend * (Math.random() * 0.1),
-  //           6,
-  //           9,
-  //         ),
-
-  //         turbidity: clamp(
-  //           danger
-  //             ? last.turbidity + 5
-  //             : last.turbidity + turbidityTrend * (Math.random() * 1),
-  //           1,
-  //           50,
-  //         ),
-  //       };
-  //       const status =
-  //         newReading.tds > 1000 || newReading.turbidity > 25
-  //           ? "NOT SAFE"
-  //           : "SAFE";
-
-  //       const fullReading: Reading = {
-  //         id: crypto.randomUUID(),
-  //         tds: newReading.tds,
-  //         ph: newReading.ph,
-  //         turbidity: newReading.turbidity,
-  //         temperature: 25 + Math.random() * 5,
-  //         status,
-  //         created_at: new Date().toISOString(),
-  //       };
-
-  //       setReading(fullReading);
-
-  //       return [...prev.slice(-10), fullReading];
-  //     });
-  //   }, 3000);
-
-  //   return () => clearInterval(interval);
-  // }, [simulatorRunning]);
+  
 
   useEffect(() => {
     if (simulatorRunning) {
