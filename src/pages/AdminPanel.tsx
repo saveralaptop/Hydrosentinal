@@ -22,6 +22,7 @@ type UserSummary = {
   id: string;
   email: string;
   role: UserRole;
+  deviceCount?: number;
 };
 
 const LOCAL_ACCOUNTS_KEY = "hydrosentinel.localAccounts";
@@ -46,12 +47,14 @@ const readLocalUsers = (): UserSummary[] => {
       uid: string;
       email: string;
       role: UserRole;
+      deviceCount?: number;
     }>;
 
     const localMapped: UserSummary[] = parsed.map((item) => ({
       id: item.uid,
       email: item.email,
       role: item.role,
+      deviceCount: item.deviceCount,
     }));
 
     const unique = new Map<string, UserSummary>();
@@ -82,24 +85,28 @@ export const AdminPanel = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [usersSnap, devicesSnap] = await Promise.all([
-          getDocs(collection(db, "users")),
-          getDocs(collection(db, "devices")),
-        ]);
-
+        const usersSnap = await getDocs(collection(db, "users"));
         const remoteUsers: UserSummary[] = usersSnap.docs.map((item) => {
-          const data = item.data() as { email?: string; role?: UserRole };
+          const data = item.data() as { email?: string; role?: UserRole; deviceCount?: number };
           return {
             id: item.id,
             email: data.email ?? "unknown@user",
             role: data.role ?? "user",
+            deviceCount: data.deviceCount ?? 0,
           };
         });
 
-        const remoteDevices: DeviceRecord[] = devicesSnap.docs.map((item) => ({
-          id: item.id,
-          ...(item.data() as Omit<DeviceRecord, "id">),
-        }));
+        const deviceSnapshots = await Promise.all(
+          remoteUsers.map(async (entry) => {
+            const snapshot = await getDocs(collection(db, "users", entry.id, "devices"));
+            return snapshot.docs.map((item) => ({
+              id: item.id,
+              ...(item.data() as Omit<DeviceRecord, "id">),
+            }));
+          })
+        );
+
+        const remoteDevices = deviceSnapshots.flat();
 
         const mergedUsers = [...readLocalUsers(), ...remoteUsers].filter(
           (entry, index, arr) => arr.findIndex((other) => other.id === entry.id) === index
@@ -143,8 +150,25 @@ export const AdminPanel = () => {
       return;
     }
 
-    setSelectedHistory(getLocalDeviceHistory(selectedDevice.id));
-  }, [selectedDevice]);
+    const loadHistory = async () => {
+      try {
+        const snapshot = await getDocs(
+          collection(db, "users", selectedUserId ?? "", "devices", selectedDevice.id, "readings")
+        );
+
+        if (snapshot.size > 0) {
+          setSelectedHistory(snapshot.docs.map((item) => item.data() as DeviceReading));
+          return;
+        }
+      } catch {
+        // Fall through to local cache.
+      }
+
+      setSelectedHistory(getLocalDeviceHistory(selectedDevice.id));
+    };
+
+    void loadHistory();
+  }, [selectedDevice, selectedUserId]);
 
   const usersWithDeviceCount = useMemo(
     () =>
@@ -152,7 +176,9 @@ export const AdminPanel = () => {
         .filter((entry) => entry.role === "user")
         .map((entry) => ({
           ...entry,
-          deviceCount: devices.filter((device) => device.ownerUid === entry.id).length,
+            deviceCount:
+              entry.deviceCount ??
+              devices.filter((device) => device.ownerUid === entry.id).length,
         })),
     [devices, users]
   );

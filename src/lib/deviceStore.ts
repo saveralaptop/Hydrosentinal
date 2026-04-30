@@ -20,6 +20,10 @@ export type DeviceReading = {
   status: "SAFE" | "NOT SAFE";
 };
 
+export type DeviceReadingInput = Omit<DeviceReading, "timestamp"> & {
+  timestamp?: string;
+};
+
 const randomRange = (min: number, max: number, decimals = 1) => {
   const value = min + Math.random() * (max - min);
   return Number(value.toFixed(decimals));
@@ -156,3 +160,6 @@ export const appendLocalDeviceReading = (deviceId: string, reading?: DeviceReadi
   saveHistoryMap(historyMap);
   return historyMap[deviceId];
 };
+
+export const toDevicePath = (ownerUid: string, deviceId: string) =>
+  `users/${ownerUid}/devices/${deviceId}`;

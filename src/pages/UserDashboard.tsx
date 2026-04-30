@@ -14,10 +14,8 @@ import {
   collection,
   deleteDoc,
   doc,
-  query,
-  updateDoc,
-  where,
   getDocs,
+  updateDoc,
 } from "firebase/firestore";
 import { db } from "@/firebase";
 import {
@@ -29,6 +27,7 @@ import {
   removeLocalDevice,
   upsertLocalDevice,
 } from "@/lib/deviceStore";
+import { increment } from "firebase/firestore";
 
 const LOCATIONS = ["North Zone", "South Zone", "East Zone", "West Zone", "Central Hub"];
 
@@ -56,11 +55,7 @@ export const UserDashboard = () => {
 
     const fetchDevices = async () => {
       try {
-        const deviceQuery = query(
-          collection(db, "devices"),
-          where("ownerUid", "==", user.uid)
-        );
-        const snapshot = await getDocs(deviceQuery);
+        const snapshot = await getDocs(collection(db, "users", user.uid, "devices"));
 
         const remoteDevices = snapshot.docs.map((item) => ({
           id: item.id,
@@ -96,7 +91,25 @@ export const UserDashboard = () => {
       return;
     }
 
-    setHistory(getLocalDeviceHistory(selectedDevice.id));
+    const loadHistory = async () => {
+      try {
+        const readingSnapshot = await getDocs(
+          collection(db, "users", user!.uid, "devices", selectedDevice.id, "readings")
+        );
+
+        if (readingSnapshot.size > 0) {
+          const remoteHistory = readingSnapshot.docs.map((item) => item.data() as ReturnType<typeof getLocalDeviceHistory>[number]);
+          setHistory(remoteHistory);
+          return;
+        }
+      } catch {
+        // Use local fallback below.
+      }
+
+      setHistory(getLocalDeviceHistory(selectedDevice.id));
+    };
+
+    void loadHistory();
   }, [selectedDevice]);
 
   const refreshDeviceStatus = async (deviceId: string) => {
@@ -119,7 +132,7 @@ export const UserDashboard = () => {
     }
 
     try {
-      await updateDoc(doc(db, "devices", deviceId), { status: nextStatus });
+      await updateDoc(doc(db, "users", user!.uid, "devices", deviceId), { status: nextStatus });
     } catch {
       // Local fallback already updated.
     }
@@ -143,8 +156,12 @@ export const UserDashboard = () => {
     let created: DeviceRecord;
 
     try {
-      const docRef = await addDoc(collection(db, "devices"), payload);
+      const docRef = await addDoc(collection(db, "users", user.uid, "devices"), payload);
       created = { id: docRef.id, ...payload };
+
+      await updateDoc(doc(db, "users", user.uid), {
+        deviceCount: increment(1),
+      });
     } catch {
       created = { id: crypto.randomUUID(), ...payload };
     }
@@ -162,7 +179,10 @@ export const UserDashboard = () => {
     }
 
     try {
-      await deleteDoc(doc(db, "devices", deviceId));
+      await deleteDoc(doc(db, "users", user!.uid, "devices", deviceId));
+      await updateDoc(doc(db, "users", user!.uid), {
+        deviceCount: increment(-1),
+      });
     } catch {
       // Local fallback still applies.
     }
@@ -181,7 +201,23 @@ export const UserDashboard = () => {
       return;
     }
 
-    const nextHistory = appendLocalDeviceReading(selectedDevice.id, generateRandomReading());
+    const newReading = generateRandomReading();
+    const readingDocument = {
+      ...newReading,
+      userId: user!.uid,
+      deviceId: selectedDevice.id,
+    };
+
+    try {
+      await addDoc(
+        collection(db, "users", user!.uid, "devices", selectedDevice.id, "readings"),
+        readingDocument
+      );
+    } catch {
+      // Local fallback still works.
+    }
+
+    const nextHistory = appendLocalDeviceReading(selectedDevice.id, newReading);
     setHistory(nextHistory);
     await refreshDeviceStatus(selectedDevice.id);
   };

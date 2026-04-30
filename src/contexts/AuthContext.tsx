@@ -111,6 +111,7 @@ const persistUserDoc = async (uid: string, email: string | null, role: UserRole)
     await setDoc(doc(db, "users", uid), {
       email,
       role,
+      deviceCount: 0,
       createdAt: new Date().toISOString(),
       locations: role === "user" ? ["default"] : [],
       uniqueId: `USER_${uid.slice(0, 8).toUpperCase()}`,
