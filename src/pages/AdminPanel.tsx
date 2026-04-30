@@ -8,7 +8,7 @@ import { SensorCard } from "@/components/SensorCard";
 import { WaterGraph } from "@/components/WaterGraph";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "@/firebase";
-import { Users, LogOut, Cpu } from "lucide-react";
+import { Users, LogOut, Cpu, Table2 } from "lucide-react";
 import {
   DeviceRecord,
   DeviceReading,
@@ -27,10 +27,7 @@ type UserSummary = {
 
 const LOCAL_ACCOUNTS_KEY = "hydrosentinel.localAccounts";
 
-const DEMO_USERS: UserSummary[] = [
-  { id: "demo-user", email: "user@demo.com", role: "user" },
-  { id: "demo-admin", email: "admin@demo.com", role: "admin" },
-];
+const DEMO_USERS: UserSummary[] = [];
 
 const readLocalUsers = (): UserSummary[] => {
   if (typeof window === "undefined") {
@@ -75,6 +72,11 @@ export const AdminPanel = () => {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [selectedHistory, setSelectedHistory] = useState<DeviceReading[]>([]);
+  const [showDataPanel, setShowDataPanel] = useState(false);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [dataReadingsByDevice, setDataReadingsByDevice] = useState<
+    Record<string, DeviceReading[]>
+  >({});
 
   useEffect(() => {
     if (!loading && role !== "admin") {
@@ -188,6 +190,48 @@ export const AdminPanel = () => {
     navigate("/login");
   };
 
+  const getReadingsForExport = async () => {
+    const entries = await Promise.all(
+      selectedUserDevices.map(async (device) => {
+        try {
+          const snapshot = await getDocs(
+            collection(db, "users", selectedUserId ?? "", "devices", device.id, "readings")
+          );
+
+          if (snapshot.size > 0) {
+            const readings = snapshot.docs
+              .map((item) => item.data() as DeviceReading)
+              .sort(
+                (a, b) =>
+                  new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+              )
+              .slice(-10);
+
+            return [device.id, readings] as const;
+          }
+        } catch {
+          // Use local fallback below.
+        }
+
+        return [device.id, getLocalDeviceHistory(device.id).slice(-10)] as const;
+      })
+    );
+
+    return Object.fromEntries(entries);
+  };
+
+  const handleOpenData = async () => {
+    if (!selectedUser) {
+      return;
+    }
+
+    setDataLoading(true);
+    const readingsByDevice = await getReadingsForExport();
+    setDataReadingsByDevice(readingsByDevice);
+    setShowDataPanel(true);
+    setDataLoading(false);
+  };
+
   const latestReading = selectedHistory.length ? selectedHistory[selectedHistory.length - 1] : null;
   const tdsData = selectedHistory.map((item, index) => ({
     time: index + 1,
@@ -262,8 +306,14 @@ export const AdminPanel = () => {
                   <h2 className="text-xl font-semibold text-white">{selectedUser.email}</h2>
                   <p className="text-sm text-gray-400">User ID: {selectedUser.id}</p>
                 </div>
-                <div className="rounded-xl border border-slate-700 bg-slate-900/40 px-4 py-3 text-sm text-gray-300">
-                  Total Devices: <span className="text-cyan-300 font-semibold">{selectedUserDevices.length}</span>
+                <div className="flex flex-wrap items-center justify-end gap-3">
+                  <Button onClick={() => void handleOpenData()} className="bg-emerald-500 hover:bg-emerald-600 text-white flex items-center gap-2">
+                    <Table2 className="w-4 h-4" />
+                    {dataLoading ? "Loading..." : "Data"}
+                  </Button>
+                  <div className="rounded-xl border border-slate-700 bg-slate-900/40 px-4 py-3 text-sm text-gray-300">
+                    Total Devices: <span className="text-cyan-300 font-semibold">{selectedUserDevices.length}</span>
+                  </div>
                 </div>
               </div>
 
@@ -294,6 +344,76 @@ export const AdminPanel = () => {
                       </button>
                     ))}
                   </div>
+
+                  {showDataPanel && (
+                    <div className="mt-6 rounded-xl border border-slate-700 bg-slate-900/40 p-4">
+                      <div className="mb-4 flex items-center justify-between gap-3">
+                        <h3 className="text-lg font-semibold text-white">Data</h3>
+                        <Button
+                          onClick={() => setShowDataPanel(false)}
+                          className="bg-slate-700 hover:bg-slate-600 text-white"
+                        >
+                          Close
+                        </Button>
+                      </div>
+
+                      <div className="space-y-5">
+                        {selectedUserDevices.map((device) => {
+                          const readings = dataReadingsByDevice[device.id] ?? [];
+
+                          return (
+                            <div key={device.id} className="overflow-hidden rounded-lg border border-slate-700">
+                              <div className="bg-slate-800 px-4 py-3">
+                                <p className="font-semibold text-white">{device.name}</p>
+                                <p className="mt-1 text-xs text-cyan-300">Device ID: {device.uniqueId}</p>
+                              </div>
+
+                              {readings.length === 0 ? (
+                                <p className="p-4 text-sm text-gray-400">No readings found.</p>
+                              ) : (
+                                <div className="overflow-x-auto">
+                                  <table className="w-full min-w-[720px] text-left text-sm">
+                                    <thead className="bg-slate-800/80 text-xs uppercase text-gray-400">
+                                      <tr>
+                                        <th className="px-4 py-3">No.</th>
+                                        <th className="px-4 py-3">Timestamp</th>
+                                        <th className="px-4 py-3">pH</th>
+                                        <th className="px-4 py-3">TDS</th>
+                                        <th className="px-4 py-3">Turbidity</th>
+                                        <th className="px-4 py-3">Temperature</th>
+                                        <th className="px-4 py-3">Status</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-700 text-gray-200">
+                                      {readings.map((reading, index) => (
+                                        <tr key={`${device.id}-${reading.timestamp}-${index}`}>
+                                          <td className="px-4 py-3">{index + 1}</td>
+                                          <td className="px-4 py-3">{new Date(reading.timestamp).toLocaleString()}</td>
+                                          <td className="px-4 py-3">{reading.ph}</td>
+                                          <td className="px-4 py-3">{reading.tds}</td>
+                                          <td className="px-4 py-3">{reading.turbidity}</td>
+                                          <td className="px-4 py-3">{reading.temperature}</td>
+                                          <td className="px-4 py-3">
+                                            <span className={`rounded-full px-2 py-1 text-xs ${
+                                              reading.status === "SAFE"
+                                                ? "bg-green-500/20 text-green-300"
+                                                : "bg-red-500/20 text-red-300"
+                                            }`}>
+                                              {reading.status}
+                                            </span>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
 
                   {selectedDevice && (
                     <div className="mt-6 space-y-4">

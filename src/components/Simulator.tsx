@@ -33,11 +33,13 @@ function generateReading() {
   };
 }
 
+type SimulatorReading = { ph: number; tds: number; turbidity: number; temperature: number };
+
 export const Simulator = ({
   onPosted,
   onRunningChange,
 }: {
-  onPosted: (data: any) => void;
+  onPosted: (data: SimulatorReading) => void;
   onRunningChange?: (running: boolean) => void;
 }) => {
   const [running, setRunning] = useState(true);

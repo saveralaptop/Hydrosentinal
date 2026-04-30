@@ -1,5 +1,8 @@
 // @ts-nocheck
+// This file is a Deno edge function and should not be validated by the main TypeScript compiler
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+
+type Reading = { ph: number; tds: number; turbidity: number; temperature?: number; status?: string; created_at?: string };
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -8,7 +11,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const buildFallbackAnswer = (reading: any) => {
+const buildFallbackAnswer = (reading: Reading | null) => {
   if (!reading) {
     return "No sensor data is available yet. Please send at least one reading and ask again.";
   }
@@ -40,12 +43,12 @@ const sanitizeAnswer = (raw: string) => {
 const isIdentityQuestion = (q: string) =>
   /^(who are you|tum kaun ho|aap kaun ho)\??$/i.test(q.trim());
 
-const isSafeReading = (reading: any) => {
+const isSafeReading = (reading: Reading | null) => {
   if (!reading) return false;
   return !(reading.ph < 6.5 || reading.ph > 8.5 || reading.tds > 1000 || reading.turbidity > 25);
 };
 
-const buildPolicyFallback = (reading: any) => {
+const buildPolicyFallback = (reading: Reading | null) => {
   if (!reading) {
     return "I do not have enough water data. Please send a fresh reading. Action: send new sensor data and test again.";
   }
@@ -57,7 +60,7 @@ const buildPolicyFallback = (reading: any) => {
   return "NOT SAFE: Water is not safe for drinking right now. Action: use a filter and boil before drinking.";
 };
 
-const enforcePromptPolicy = (raw: string, reading: any, question: string) => {
+const enforcePromptPolicy = (raw: string, reading: Reading | null, question: string) => {
   if (isIdentityQuestion(question)) {
     return "I am HydroSentinal, your water quality assistant.";
   }

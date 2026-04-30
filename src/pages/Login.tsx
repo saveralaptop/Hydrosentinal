@@ -7,16 +7,48 @@ import { Input } from "@/components/ui/input";
 import { AlertCircle } from "lucide-react";
 
 type UserRole = "user" | "admin";
+type AuthMode = "login" | "signup" | "forgot";
+
+const ORGANIZATION_OPTIONS = [
+  "Government",
+  "Household",
+  "School / College",
+  "Hospital / Clinic",
+  "Industry",
+  "NGO",
+  "Apartment / Society",
+  "Farm / Agriculture",
+  "Water Supplier",
+  "Other",
+];
 
 export const Login = () => {
+  const [name, setName] = useState("");
+  const [organization, setOrganization] = useState(ORGANIZATION_OPTIONS[0]);
+  const [resetCode, setResetCode] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [selectedRole, setSelectedRole] = useState<UserRole>("user");
-  const [isLogin, setIsLogin] = useState(true);
+  const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
-  const { login, signup, user, role } = useAuth();
+  const { login, signup, resetPassword, user, role } = useAuth();
   const navigate = useNavigate();
+
+  const isLogin = authMode === "login";
+  const isSignup = authMode === "signup";
+  const isForgot = authMode === "forgot";
+
+  const selectRole = (nextRole: UserRole) => {
+    setSelectedRole(nextRole);
+    setError("");
+    setSuccess("");
+
+    if (nextRole === "admin") {
+      setAuthMode("login");
+    }
+  };
 
   useEffect(() => {
     if (!user) {
@@ -29,13 +61,23 @@ export const Login = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setSuccess("");
     setLoading(true);
 
     try {
-      if (isLogin) {
+      if (isForgot) {
+        await resetPassword(email, resetCode, password);
+        setSuccess("Password reset ho gaya. Ab new password se login karein.");
+        setAuthMode("login");
+        setPassword("");
+        setResetCode("");
+        return;
+      }
+
+      if (isLogin || selectedRole === "admin") {
         await login(email, password, selectedRole);
       } else {
-        await signup(email, password, selectedRole);
+        await signup(email, password, selectedRole, { name, organization, resetCode });
       }
 
       // Redirect based on role
@@ -90,7 +132,7 @@ export const Login = () => {
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              onClick={() => setSelectedRole("user")}
+              onClick={() => selectRole("user")}
               className={`py-3 rounded-lg font-semibold transition-all ${
                 selectedRole === "user"
                   ? "bg-cyan-500 text-white shadow-lg shadow-cyan-500/50"
@@ -102,7 +144,7 @@ export const Login = () => {
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              onClick={() => setSelectedRole("admin")}
+              onClick={() => selectRole("admin")}
               className={`py-3 rounded-lg font-semibold transition-all ${
                 selectedRole === "admin"
                   ? "bg-purple-500 text-white shadow-lg shadow-purple-500/50"
@@ -115,6 +157,59 @@ export const Login = () => {
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-4">
+            {isSignup && selectedRole === "user" && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Name
+                  </label>
+                  <Input
+                    type="text"
+                    placeholder="Your name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    required
+                    className="bg-slate-700 border-slate-600 text-white placeholder:text-gray-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Organization Type
+                  </label>
+                  <select
+                    value={organization}
+                    onChange={(e) => setOrganization(e.target.value)}
+                    required
+                    className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-white"
+                  >
+                    {ORGANIZATION_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    4 Digit Recovery Code
+                  </label>
+                  <Input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="\d{4}"
+                    maxLength={4}
+                    placeholder="1234"
+                    value={resetCode}
+                    onChange={(e) => setResetCode(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                    required
+                    className="bg-slate-700 border-slate-600 text-white placeholder:text-gray-500"
+                  />
+                </div>
+              </>
+            )}
+
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
                 Email
@@ -131,7 +226,7 @@ export const Login = () => {
 
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
-                Password
+                {isForgot ? "New Password" : "Password"}
               </label>
               <Input
                 type="password"
@@ -142,10 +237,35 @@ export const Login = () => {
                 className="bg-slate-700 border-slate-600 text-white placeholder:text-gray-500"
               />
             </div>
+
+            {isForgot && selectedRole === "user" && (
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  4 Digit Recovery Code
+                </label>
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="\d{4}"
+                  maxLength={4}
+                  placeholder="1234"
+                  value={resetCode}
+                  onChange={(e) => setResetCode(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                  required
+                  className="bg-slate-700 border-slate-600 text-white placeholder:text-gray-500"
+                />
+              </div>
+            )}
             {error && (
               <div className="flex items-center gap-2 p-3 bg-red-500/20 border border-red-500/50 rounded-lg">
                 <AlertCircle className="w-4 h-4 text-red-400" />
                 <p className="text-sm text-red-400">{error}</p>
+              </div>
+            )}
+
+            {success && (
+              <div className="p-3 bg-green-500/20 border border-green-500/50 rounded-lg">
+                <p className="text-sm text-green-300">{success}</p>
               </div>
             )}
 
@@ -154,29 +274,50 @@ export const Login = () => {
               disabled={loading}
               className="w-full py-3 bg-gradient-to-r from-cyan-500 to-green-500 hover:from-cyan-600 hover:to-green-600 text-white font-semibold rounded-lg transition-all"
             >
-              {loading ? "Loading..." : isLogin ? "Login" : "Sign Up"}
+              {loading
+                ? "Loading..."
+                : isForgot
+                ? "Reset Password"
+                : isLogin || selectedRole === "admin"
+                ? "Login"
+                : "Sign Up"}
             </Button>
           </form>
 
           {/* Toggle between login and signup */}
-          <div className="mt-6 text-center">
-            <p className="text-gray-400 text-sm">
-              {isLogin ? "Don't have an account? " : "Already have an account? "}
-              <button
-                onClick={() => setIsLogin(!isLogin)}
-                className="text-cyan-400 hover:text-cyan-300 font-semibold transition-colors"
-              >
-                {isLogin ? "Sign Up" : "Login"}
-              </button>
-            </p>
-          </div>
-
-          {/* Demo credentials */}
-          <div className="mt-6 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg text-xs text-blue-300">
-            <p className="font-semibold mb-1">Demo Credentials:</p>
-            <p>User: user@demo.com / password</p>
-            <p>Admin: admin@demo.com / password</p>
-          </div>
+          {selectedRole === "user" && (
+            <div className="mt-6 text-center">
+              <p className="text-gray-400 text-sm">
+                {isLogin
+                  ? "Don't have an account? "
+                  : isForgot
+                  ? "Remember password? "
+                  : "Already have an account? "}
+                <button
+                  onClick={() => {
+                    setAuthMode(isLogin ? "signup" : "login");
+                    setError("");
+                    setSuccess("");
+                  }}
+                  className="text-cyan-400 hover:text-cyan-300 font-semibold transition-colors"
+                >
+                  {isLogin ? "Sign Up" : "Login"}
+                </button>
+              </p>
+              {isLogin && (
+                <button
+                  onClick={() => {
+                    setAuthMode("forgot");
+                    setError("");
+                    setSuccess("");
+                  }}
+                  className="mt-3 text-sm font-semibold text-cyan-400 hover:text-cyan-300 transition-colors"
+                >
+                  Forgot password?
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </motion.div>
     </main>

@@ -90,22 +90,22 @@ const TEAM = [
   },
 
   {
-    name: "Savera",
-    role: "Frontend + UI",
+    name: "Harsh kumar",
+    role: "Hardware + IOT",
     img: "/team2.jpg",
     intro:
-      "This is Savera, a talented frontend developer with a keen eye for design. He is responsible for creating an intuitive and user-friendly interface for HydroSentinel. With a strong foundation in React and UI/UX principles, Savera ensures that users can easily navigate and interact with the application.",
-    github: "https://github.com/SAVERA-123",
+      "This is Harsh, a talented frontend developer with a keen eye for design. He is responsible for creating an intuitive and user-friendly interface for HydroSentinel. With a strong foundation in React and UI/UX principles, Harsh ensures that users can easily navigate and interact with the application.",
+    github: "https://github.com/HARSH-456",
     linkedin: "https://www.linkedin.com/in/savera-456/",
   },
   {
-    name: "Member 3",
-    role: "Hardware + IoT",
+    name: "Himanshu shourav",
+    role: "TEAM LEADER",
     img: "/team3.jpg",
     intro: "Expert in AI systems and backend architecture",
   },
   {
-    name: "Member 4",
+    name: "Himanshu kumar",
     role: "AI + Backend",
     img: "/team1.jpg",
     intro: "Expert in AI systems and backend architecture",
@@ -116,12 +116,12 @@ const TEAM = [
     img: "/team2.jpg",
     intro: "Expert in AI systems and backend architecture",
   },
-  {
-    name: "Member 6",
-    role: "Hardware + IoT",
-    img: "/team3.jpg",
-    intro: "Expert in AI systems and backend architecture",
-  },
+  // {
+  //   name: "Member 6",
+  //   role: "Hardware + IoT",
+  //   img: "/team3.jpg",
+  //   intro: "Expert in AI systems and backend architecture",
+  // },
 ];
 
 const WATER_QUOTES = [
@@ -161,7 +161,7 @@ const Index = () => {
   const [activeFeature, setActiveFeature] = useState<number | null>(null);
   const [expandedFeature, setExpandedFeature] = useState<number | null>(null);
   const [prediction, setPrediction] = useState<string | null>(null);
-  const [sensorData, setSensorData] = useState<any[]>([]);
+  const [sensorData, setSensorData] = useState<Record<string, unknown>[]>([]);
 
 
   useEffect(() => {
@@ -180,7 +180,7 @@ const Index = () => {
     const fetchData = async () => {
       const querySnapshot = await getDocs(collection(db, "waterData"));
 
-      const arr: any[] = [];
+      const arr: Record<string, unknown>[] = [];
       querySnapshot.forEach((doc) => {
         arr.push(doc.data());
       });

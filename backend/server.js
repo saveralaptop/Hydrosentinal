@@ -55,9 +55,38 @@ async function startServer() {
     // Expose DB availability to request handlers via app.locals
     app.locals.dbAvailable = dbAvailable;
 
-    app.listen(port, () => {
+    const server = app.listen(port, () => {
       console.log(`HydroSentinal backend running on http://localhost:${port}`);
       if (!dbAvailable) console.log("NOTE: MySQL unavailable — reading sync disabled.");
+    });
+
+    server.on('error', (err) => {
+      if (err && err.code === 'EADDRINUSE') {
+        const newPort = port + 1;
+        console.warn(`Port ${port} in use, trying ${newPort}`);
+        const fallback = app.listen(newPort, () => {
+          console.log(`HydroSentinal backend running on http://localhost:${newPort}`);
+        });
+        fallback.on('error', (err2) => {
+          if (err2 && err2.code === 'EADDRINUSE') {
+            console.warn(`Port ${newPort} also in use, starting on a random free port`);
+            const randomServer = app.listen(0, () => {
+              const actual = randomServer.address().port;
+              console.log(`HydroSentinal backend running on http://localhost:${actual}`);
+            });
+            randomServer.on('error', (err3) => {
+              console.error('Failed to start server on random port:', err3);
+              process.exitCode = 1;
+            });
+          } else {
+            console.error('Server error while trying to bind fallback port:', err2);
+            process.exitCode = 1;
+          }
+        });
+      } else {
+        console.error('Server error:', err);
+        process.exitCode = 1;
+      }
     });
   } catch (error) {
     console.error("Server failed to start:", error);

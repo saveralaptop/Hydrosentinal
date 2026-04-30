@@ -1,4 +1,5 @@
 // @ts-nocheck
+// This file is a Deno edge function and should not be validated by the main TypeScript compiler
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
 const corsHeaders = {

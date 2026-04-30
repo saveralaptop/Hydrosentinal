@@ -5,7 +5,6 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
-  DotProps,
 } from "recharts";
 
 type Props = {
@@ -20,6 +19,12 @@ type WaterPoint = {
   turbidity?: number;
 };
 
+type DotRendererProps = {
+  cx?: number;
+  cy?: number;
+  index?: number;
+};
+
 const isUnsafe = (data: WaterPoint) => {
   return (
     (data.tds ?? 0) > 1000 ||
@@ -30,12 +35,16 @@ const isUnsafe = (data: WaterPoint) => {
 };
 
 export const WaterGraph = ({ data, type }: Props) => {
+  const visibleData = data
+    .slice(-10)
+    .map((point, index) => ({ ...point, time: index + 1 }));
+
   return (
     <div className="bg-white/5 backdrop-blur-md rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-[1.02] transition duration-300">
       {" "}
       <h2 className="text-sm font-semibold mb-3">📊 Water Trends</h2>
       <ResponsiveContainer width="100%" height={250}>
-        <LineChart data={data}>
+        <LineChart data={visibleData}>
           <XAxis dataKey="time" stroke="#94a3b8" />
           <YAxis stroke="#94a3b8" />
           <Tooltip
@@ -64,15 +73,16 @@ export const WaterGraph = ({ data, type }: Props) => {
                 dataKey="ph"
                 stroke="#22c55e"
                 strokeWidth={2}
-                dot={(props: any) => {
-                  const { cx, cy, index } = props;
+                dot={(props: DotRendererProps) => {
+                  const { cx = 0, cy = 0, index = 0 } = props;
 
-                  if (index === data.length - 1) {
+                  if (index === visibleData.length - 1) {
                     return <circle cx={cx} cy={cy} r={6} fill="#22c55e" />;
                   }
 
                   return <circle cx={cx} cy={cy} r={3} fill="#22c55e" />;
                 }}
+
                 activeDot={{ r: 6 }}
                 isAnimationActive={false}
               />
@@ -81,15 +91,16 @@ export const WaterGraph = ({ data, type }: Props) => {
                 dataKey="turbidity"
                 stroke="#eab308"
                 strokeWidth={2}
-                dot={(props: any) => {
-                  const { cx, cy, index } = props;
+                dot={(props: DotRendererProps) => {
+                  const { cx = 0, cy = 0, index = 0 } = props;
 
-                  if (index === data.length - 1) {
+                  if (index === visibleData.length - 1) {
                     return <circle cx={cx} cy={cy} r={6} fill="#eab308" />;
                   }
 
                   return <circle cx={cx} cy={cy} r={3} fill="#eab308" />;
                 }}
+
                 activeDot={{ r: 6 }}
                 isAnimationActive={false}
               />

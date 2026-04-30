@@ -14,7 +14,9 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
+  setDoc,
   updateDoc,
 } from "firebase/firestore";
 import { db } from "@/firebase";
@@ -30,6 +32,20 @@ import {
 import { increment } from "firebase/firestore";
 
 const LOCATIONS = ["North Zone", "South Zone", "East Zone", "West Zone", "Central Hub"];
+
+const toFirestoreIdPart = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+const buildDeviceDocumentId = (uid: string, deviceName: string) => {
+  const username = toFirestoreIdPart(uid) || "user";
+  const device = toFirestoreIdPart(deviceName) || "device";
+
+  return `${username}-${device}`;
+};
 
 export const UserDashboard = () => {
   const { user, logout } = useAuth();
@@ -136,6 +152,12 @@ export const UserDashboard = () => {
     } catch {
       // Local fallback already updated.
     }
+
+    try {
+      await updateDoc(doc(db, "devices", deviceId), { status: nextStatus });
+    } catch {
+      // Root devices mirror may be unavailable depending on Firestore rules.
+    }
   };
 
   const handleAddDevice = async (event: React.FormEvent) => {
@@ -144,10 +166,11 @@ export const UserDashboard = () => {
       return;
     }
 
+    const deviceId = buildDeviceDocumentId(user.uid, newDevice.name);
     const payload: Omit<DeviceRecord, "id"> = {
       ownerUid: user.uid,
       name: newDevice.name.trim(),
-      uniqueId: `${user.uid}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+      uniqueId: deviceId,
       location: newDevice.location,
       status: "active",
       createdAt: new Date().toISOString(),
@@ -156,14 +179,25 @@ export const UserDashboard = () => {
     let created: DeviceRecord;
 
     try {
-      const docRef = await addDoc(collection(db, "users", user.uid, "devices"), payload);
-      created = { id: docRef.id, ...payload };
+      const deviceRef = doc(db, "users", user.uid, "devices", deviceId);
+      const existingDevice = await getDoc(deviceRef);
 
-      await updateDoc(doc(db, "users", user.uid), {
-        deviceCount: increment(1),
-      });
+      await setDoc(deviceRef, payload);
+      created = { id: deviceId, ...payload };
+
+      try {
+        await setDoc(doc(db, "devices", deviceId), payload);
+      } catch {
+        // Root devices mirror may be unavailable depending on Firestore rules.
+      }
+
+      if (!existingDevice.exists()) {
+        await updateDoc(doc(db, "users", user.uid), {
+          deviceCount: increment(1),
+        });
+      }
     } catch {
-      created = { id: crypto.randomUUID(), ...payload };
+      created = { id: deviceId, ...payload };
     }
 
     upsertLocalDevice(created);
@@ -185,6 +219,12 @@ export const UserDashboard = () => {
       });
     } catch {
       // Local fallback still applies.
+    }
+
+    try {
+      await deleteDoc(doc(db, "devices", deviceId));
+    } catch {
+      // Root devices mirror may be unavailable depending on Firestore rules.
     }
 
     removeLocalDevice(deviceId);
@@ -251,10 +291,12 @@ export const UserDashboard = () => {
             <h1 className="text-3xl font-bold text-white">User Device Dashboard</h1>
             <p className="text-sm text-gray-400 mt-1">{user?.email}</p>
           </div>
-          <Button onClick={handleLogout} className="bg-red-500 hover:bg-red-600 text-white flex items-center gap-2">
-            <LogOut className="w-4 h-4" />
-            Logout
-          </Button>
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <Button onClick={handleLogout} className="bg-red-500 hover:bg-red-600 text-white flex items-center gap-2">
+              <LogOut className="w-4 h-4" />
+              Logout
+            </Button>
+          </div>
         </div>
       </div>
 
