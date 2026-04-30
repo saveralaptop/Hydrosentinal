@@ -8,7 +8,7 @@ import { StatusBanner } from "@/components/StatusBanner";
 import { SensorCard } from "@/components/SensorCard";
 import { WaterGraph } from "@/components/WaterGraph";
 import { ChatPanel } from "@/components/ChatPanel";
-import { LogOut, Plus, Trash2 } from "lucide-react";
+import { LogOut, Plus, Table2, Trash2 } from "lucide-react";
 import {
   addDoc,
   collection,
@@ -56,6 +56,7 @@ export const UserDashboard = () => {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [history, setHistory] = useState<ReturnType<typeof getLocalDeviceHistory>>([]);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showDataPanel, setShowDataPanel] = useState(false);
   const [newDevice, setNewDevice] = useState({ name: "", location: "North Zone" });
 
   const selectedDevice = useMemo(
@@ -268,6 +269,7 @@ export const UserDashboard = () => {
   };
 
   const latest = history.length ? history[history.length - 1] : null;
+  const latestReadings = history.slice(-10);
   const tdsData = history.map((item, index) => ({ time: index + 1, tds: item.tds }));
   const phTurbidityData = history.map((item, index) => ({
     time: index + 1,
@@ -380,15 +382,79 @@ export const UserDashboard = () => {
               simulatorRunning={true}
             />
 
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-800/50 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-800/50 p-4">
               <div>
                 <h3 className="text-white font-semibold">Selected Device: {selectedDevice.name}</h3>
                 <p className="text-gray-300 text-sm">Device ID: {selectedDevice.uniqueId} | Installed at: {selectedDevice.location}</p>
               </div>
-              <Button onClick={() => void addNewReading()} className="bg-indigo-500 hover:bg-indigo-600 text-white">
-                Add New Reading
-              </Button>
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <Button onClick={() => setShowDataPanel((prev) => !prev)} className="bg-emerald-500 hover:bg-emerald-600 text-white flex items-center gap-2">
+                  <Table2 className="w-4 h-4" />
+                  Data
+                </Button>
+                <Button onClick={() => void addNewReading()} className="bg-indigo-500 hover:bg-indigo-600 text-white">
+                  Add New Reading
+                </Button>
+              </div>
             </div>
+
+            {showDataPanel && (
+              <div className="rounded-xl border border-slate-700 bg-slate-900/40 p-4">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-semibold text-white">Data</h3>
+                    <p className="mt-1 text-xs text-cyan-300">Device ID: {selectedDevice.uniqueId}</p>
+                  </div>
+                  <Button
+                    onClick={() => setShowDataPanel(false)}
+                    className="bg-slate-700 hover:bg-slate-600 text-white"
+                  >
+                    Close
+                  </Button>
+                </div>
+
+                {latestReadings.length === 0 ? (
+                  <p className="text-sm text-gray-400">No readings found.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[720px] text-left text-sm">
+                      <thead className="bg-slate-800/80 text-xs uppercase text-gray-400">
+                        <tr>
+                          <th className="px-4 py-3">No.</th>
+                          <th className="px-4 py-3">Timestamp</th>
+                          <th className="px-4 py-3">pH</th>
+                          <th className="px-4 py-3">TDS</th>
+                          <th className="px-4 py-3">Turbidity</th>
+                          <th className="px-4 py-3">Temperature</th>
+                          <th className="px-4 py-3">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-700 text-gray-200">
+                        {latestReadings.map((reading, index) => (
+                          <tr key={`${selectedDevice.id}-${reading.timestamp}-${index}`}>
+                            <td className="px-4 py-3">{index + 1}</td>
+                            <td className="px-4 py-3">{new Date(reading.timestamp).toLocaleString()}</td>
+                            <td className="px-4 py-3">{reading.ph}</td>
+                            <td className="px-4 py-3">{reading.tds}</td>
+                            <td className="px-4 py-3">{reading.turbidity}</td>
+                            <td className="px-4 py-3">{reading.temperature}</td>
+                            <td className="px-4 py-3">
+                              <span className={`rounded-full px-2 py-1 text-xs ${
+                                reading.status === "SAFE"
+                                  ? "bg-green-500/20 text-green-300"
+                                  : "bg-red-500/20 text-red-300"
+                              }`}>
+                                {reading.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
 
             <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <SensorCard label="pH" value={latest?.ph} unit="" icon="ph" safeRange="6.5 - 8.5" alert={(latest?.ph ?? 7) < 6.5 || (latest?.ph ?? 7) > 8.5} />
