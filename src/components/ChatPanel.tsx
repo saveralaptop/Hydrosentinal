@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Send, Sparkles, Loader2, Mic, MicOff, Volume2, VolumeX, Settings2, Play, Pause } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -300,9 +300,9 @@ export const ChatPanel = () => {
         }
       }, 180);
     }
-  }, [messages, isListening]);
+  }, [messages, isListening, startVoiceInput]);
 
-  const startVoiceInput = (fromAutoLoop = false) => {
+  const startVoiceInput = useCallback((fromAutoLoop = false) => {
     if (isListening || loadingRef.current) return;
 
     const SpeechRecognitionCtor =
@@ -411,7 +411,7 @@ export const ChatPanel = () => {
         }
       }, 120);
     }
-  };
+  }, [isListening, send]);
 
   const stopVoiceInput = () => {
     shouldContinueListeningRef.current = false;

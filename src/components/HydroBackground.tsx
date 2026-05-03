@@ -1,5 +1,27 @@
 import { useEffect, useRef } from "react";
 
+type Particle = {
+  x: number;
+  y: number;
+  r: number;
+  dx: number;
+  dy: number;
+  baseX: number;
+  baseY: number;
+  life: number;
+  maxLife: number;
+};
+
+type FloatingOrb = {
+  x: number;
+  y: number;
+  r: number;
+  dx: number;
+  dy: number;
+  opacity: number;
+  color: [number, number, number];
+};
+
 const HydroBackground = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const timeRef = useRef(0);
@@ -11,8 +33,8 @@ const HydroBackground = () => {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    const particles: any[] = [];
-    const floatingOrbs: any[] = [];
+    const particles: Particle[] = [];
+    const floatingOrbs: FloatingOrb[] = [];
 
     // 🌊 Create main particles with enhanced physics
     for (let i = 0; i < 80; i++) {
@@ -44,7 +66,7 @@ const HydroBackground = () => {
       });
     }
 
-    const drawGradientCircle = (x: number, y: number, r: number, color: number[], opacity: number) => {
+    const drawGradientCircle = (x: number, y: number, r: number, color: [number, number, number], opacity: number) => {
       const gradient = ctx.createRadialGradient(x, y, 0, x, y, r);
       const [r_, g_, b_] = color;
       gradient.addColorStop(0, `rgba(${r_},${g_},${b_},${opacity * 0.8})`);
