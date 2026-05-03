@@ -94,22 +94,7 @@ export const Login = () => {
   };
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center px-4">
-      {/* Background animation */}
-      <div className="absolute inset-0 overflow-hidden">
-        <motion.div
-          className="absolute w-96 h-96 bg-cyan-500/20 rounded-full blur-3xl"
-          animate={{ y: [0, -30, 0] }}
-          transition={{ repeat: Infinity, duration: 8 }}
-          style={{ top: "10%", left: "10%" }}
-        />
-        <motion.div
-          className="absolute w-96 h-96 bg-green-500/20 rounded-full blur-3xl"
-          animate={{ y: [0, 30, 0] }}
-          transition={{ repeat: Infinity, duration: 8 }}
-          style={{ bottom: "10%", right: "10%" }}
-        />
-      </div>
+    <main className="min-h-screen bg-transparent flex items-center justify-center px-4">
 
       {/* Login card */}
       <motion.div

@@ -1,10 +1,23 @@
+import { 
+  collection, 
+  query, 
+  where, 
+  getDocs 
+} from "firebase/firestore";
+import { db } from "@/firebase"; 
+
 export type DeviceRecord = {
   id: string;
   ownerUid: string;
   name: string;
   uniqueId: string;
   location: string;
+  deviceType?: "simulator" | "real";
+  latitude?: number;
+  longitude?: number;
+  zone?: string;
   status: "active" | "inactive";
+  battery?: number;
   createdAt: string;
 };
 
@@ -46,36 +59,50 @@ export const generateRandomReading = (): DeviceReading => {
   };
 };
 
-const buildInitialHistory = () =>
-  Array.from({ length: 10 }, () => generateRandomReading());
+export const getDevicesByZone = async (zone: string): Promise<DeviceRecord[]> => {
+  if (!zone) {
+    console.warn("[Zone Query] No zone provided, returning empty array");
+    return [];
+  }
 
-const DEMO_DEVICES: DeviceRecord[] = [
-  {
-    id: "demo-user",
-    ownerUid: "demo-user",
-    name: "Demo Water Sensor",
-    uniqueId: "demo-user",
-    location: "North Zone",
-    status: "active",
-    createdAt: new Date().toISOString(),
-  },
-];
+  try {
+    console.log(`[Zone Query] Fetching devices for zone: ${zone}`);
+    const q = query(
+      collection(db, "devices"),
+      where("zone", "==", zone)
+    );
+
+    const snapshot = await getDocs(q);
+    const devices = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    })) as DeviceRecord[];
+
+    console.log(`[Zone Query] Found ${devices.length} devices in zone ${zone}`, devices);
+    return devices;
+  } catch (error) {
+    console.error(`[Zone Query] Error fetching devices for zone ${zone}:`, error);
+    return [];
+  }
+};
+
+const buildInitialHistory = (): DeviceReading[] => [];
 
 export const readLocalDevices = (): DeviceRecord[] => {
   if (typeof window === "undefined") {
-    return DEMO_DEVICES;
+    return [];
   }
 
   try {
     const rawDevices = window.localStorage.getItem(LOCAL_DEVICES_KEY);
     if (!rawDevices) {
-      window.localStorage.setItem(LOCAL_DEVICES_KEY, JSON.stringify(DEMO_DEVICES));
-      return DEMO_DEVICES;
+      window.localStorage.setItem(LOCAL_DEVICES_KEY, JSON.stringify([]));
+      return [];
     }
 
     return JSON.parse(rawDevices) as DeviceRecord[];
   } catch {
-    return DEMO_DEVICES;
+    return [];
   }
 };
 
@@ -95,9 +122,7 @@ const readHistoryMap = (): Record<string, DeviceReading[]> => {
   try {
     const rawHistory = window.localStorage.getItem(LOCAL_DEVICE_HISTORY_KEY);
     if (!rawHistory) {
-      const seed: Record<string, DeviceReading[]> = {
-        "demo-user": buildInitialHistory(),
-      };
+      const seed: Record<string, DeviceReading[]> = {};
       window.localStorage.setItem(LOCAL_DEVICE_HISTORY_KEY, JSON.stringify(seed));
       return seed;
     }
@@ -122,7 +147,7 @@ export const upsertLocalDevice = (device: DeviceRecord) => {
 
   const historyMap = readHistoryMap();
   if (!historyMap[device.id]) {
-    historyMap[device.id] = buildInitialHistory();
+    historyMap[device.id] = [];
     saveHistoryMap(historyMap);
   }
 };
@@ -145,7 +170,7 @@ export const getLocalDevicesByOwner = (ownerUid: string) =>
 export const getLocalDeviceHistory = (deviceId: string): DeviceReading[] => {
   const historyMap = readHistoryMap();
   if (!historyMap[deviceId]) {
-    historyMap[deviceId] = buildInitialHistory();
+    historyMap[deviceId] = [];
     saveHistoryMap(historyMap);
   }
 
@@ -154,7 +179,7 @@ export const getLocalDeviceHistory = (deviceId: string): DeviceReading[] => {
 
 export const appendLocalDeviceReading = (deviceId: string, reading?: DeviceReading) => {
   const historyMap = readHistoryMap();
-  const current = historyMap[deviceId] ?? buildInitialHistory();
+  const current = historyMap[deviceId] ?? [];
   const nextReading = reading ?? generateRandomReading();
   historyMap[deviceId] = [...current, nextReading].slice(-30);
   saveHistoryMap(historyMap);

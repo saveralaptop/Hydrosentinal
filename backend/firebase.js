@@ -18,17 +18,22 @@ if (!fs.existsSync(serviceAccountPath)) {
 
 const serviceAccount = require(serviceAccountPath);
 
+let firestoreInstance = null;
+
 function initializeFirebase() {
   if (!admin.apps.length) {
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
     });
+    firestoreInstance = admin.firestore();
+    firestoreInstance.settings({ ignoreUndefinedProperties: true });
   }
 
-  const firestore = admin.firestore();
-  firestore.settings({ ignoreUndefinedProperties: true });
+  if (!firestoreInstance) {
+    firestoreInstance = admin.firestore();
+  }
 
-  return { admin, firestore };
+  return { admin, firestore: firestoreInstance };
 }
 
 module.exports = {

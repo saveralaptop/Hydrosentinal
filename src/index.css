@@ -111,8 +111,39 @@ All colors MUST be HSL.
     @apply border-border;
   }
 
-  body {
-    @apply bg-background text-foreground;
+  html,
+  body,
+  #root {
+    width: 100%;
+    min-height: 100%;
+    margin: 0;
   }
+
+  body {
+    @apply text-foreground;
+    background:
+      radial-gradient(circle at 50% 8%, rgba(0, 255, 255, 0.1) 0%, rgba(0, 255, 255, 0) 45%),
+      linear-gradient(145deg, #020c1b 0%, #0a192f 48%, #0f2027 100%);
+    overflow-x: hidden;
+  }
+}
+
+.app-scene-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.app-scene-bg canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.app-content-layer {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
 }
 

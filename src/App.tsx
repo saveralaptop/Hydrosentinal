@@ -6,8 +6,10 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import NotFound from "./pages/NotFound.tsx";
 import Login from "./pages/Login.tsx";
+import Index from "./pages/Index.tsx";
 import UserDashboard from "./pages/UserDashboard.tsx";
 import AdminPanel from "./pages/AdminPanel.tsx";
+import HydroBackground from "./components/HydroBackground";
 
 const queryClient = new QueryClient();
 
@@ -23,7 +25,7 @@ const ProtectedRoute = ({
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center">
+      <div className="min-h-screen bg-transparent flex items-center justify-center">
         <div className="text-white text-xl">Loading...</div>
       </div>
     );
@@ -40,30 +42,12 @@ const ProtectedRoute = ({
   return children;
 };
 
-const HomeRedirect = () => {
-  const { user, role, loading } = useAuth();
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center">
-        <div className="text-white text-xl">Loading...</div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return <Navigate to="/login" replace />;
-  }
-
-  return <Navigate to={role === "admin" ? "/admin" : "/dashboard"} replace />;
-};
-
 const AppRoutes = () => {
   const { loading } = useAuth();
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center">
+      <div className="min-h-screen bg-transparent flex items-center justify-center">
         <div className="text-white text-xl">Loading...</div>
       </div>
     );
@@ -72,9 +56,9 @@ const AppRoutes = () => {
   return (
     <Routes>
       {/* Public routes */}
-      <Route path="/" element={<HomeRedirect />} />
+      <Route path="/" element={<Index />} />
       <Route path="/login" element={<Login />} />
-      <Route path="/home" element={<HomeRedirect />} />
+      <Route path="/home" element={<Index />} />
 
       {/* User routes */}
       <Route
@@ -104,15 +88,18 @@ const AppRoutes = () => {
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter>
-        <AuthProvider>
-          <AppRoutes />
-        </AuthProvider>
-      </BrowserRouter>
-    </TooltipProvider>
+    <HydroBackground />
+    <div className="app-content-layer">
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <BrowserRouter>
+          <AuthProvider>
+            <AppRoutes />
+          </AuthProvider>
+        </BrowserRouter>
+      </TooltipProvider>
+    </div>
   </QueryClientProvider>
 );
 

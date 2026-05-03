@@ -8,18 +8,19 @@
     "dev": "nodemon server.js",
     "start": "node server.js",
     "sync": "node sync.js",
-    "check": "node --check server.js && node --check sync.js && node --check firebase.js && node --check db.js"
+    "clear:devices": "node clearAllDevices.js",
+    "check": "node --check server.js && node --check sync.js && node --check firebase.js && node --check db.js && node --check clearAllDevices.js"
   },
   "dependencies": {
+    "better-sqlite3": "^12.9.0",
     "cors": "^2.8.6",
     "dotenv": "^16.6.1",
     "express": "^4.22.1",
     "firebase-admin": "^13.8.0",
-    "mysql2": "^3.22.3"
+    "mysql2": "^3.22.3",
+    "sqlite3": "^6.0.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
   }
-  
 }
-

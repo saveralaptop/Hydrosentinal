@@ -1,5 +1,5 @@
 const { admin, initializeFirebase } = require("./firebase");
-const { getPool } = require("./db");
+const { getDb } = require("./db");
 
 const processingDocs = new Set();
 let realtimeListeners = [];
@@ -74,23 +74,64 @@ async function retry(fn, attempts = 3, delayMs = 500) {
   throw lastError;
 }
 
-async function insertReadingIntoMySQL(reading) {
-  // The unique key prevents duplicate inserts for the same device/timestamp pair.
+function detectReadingAnomaly(reading) {
+  const anomalies = [];
+
+  if (reading.ph !== null) {
+    if (reading.ph < 6.5) {
+      anomalies.push(`pH too low (${reading.ph})`);
+    } else if (reading.ph > 8.5) {
+      anomalies.push(`pH too high (${reading.ph})`);
+    }
+  }
+
+  if (reading.turbidity !== null && reading.turbidity > 15) {
+    anomalies.push(`turbidity too high (${reading.turbidity})`);
+  }
+
+  if (anomalies.length === 0) {
+    return null;
+  }
+
+  return {
+    severity: anomalies.length > 1 ? "critical" : "warning",
+    reason: anomalies.join("; "),
+  };
+}
+
+async function createAnomalyAlert(reading, anomaly) {
+  try {
+    const alertPayload = {
+      userId: reading.userId,
+      deviceId: reading.deviceId,
+      timestamp: reading.timestamp.toISOString(),
+      severity: anomaly.severity,
+      reason: anomaly.reason,
+      source: "firestore-sync",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    await firestore.collection("alerts").add(alertPayload);
+    console.warn(`Anomaly detected for ${reading.deviceId}: ${anomaly.reason}`);
+  } catch (error) {
+    console.error("Failed to create anomaly alert:", error);
+  }
+}
+
+async function insertReadingIntoSQLite(reading) {
+  const db = getDb();
   const sql = `
-    INSERT INTO readings (user_id, device_id, ph, turbidity, timestamp)
+    INSERT OR IGNORE INTO readings (user_id, device_id, ph, turbidity, timestamp)
     VALUES (?, ?, ?, ?, ?)
-    ON DUPLICATE KEY UPDATE
-      ph = VALUES(ph),
-      turbidity = VALUES(turbidity),
-      timestamp = VALUES(timestamp)
   `;
 
-  await getPool().execute(sql, [
+  const stmt = db.prepare(sql);
+  stmt.run([
     reading.userId,
     reading.deviceId,
     reading.ph,
     reading.turbidity,
-    reading.timestamp,
+    reading.timestamp.toISOString(),
   ]);
 }
 
@@ -102,7 +143,7 @@ async function markDocumentSynced(docSnap) {
 }
 
 async function syncDocument(docSnap) {
-  if (!docSnap.exists()) {
+  if (!docSnap.exists) {
     return;
   }
 
@@ -123,7 +164,13 @@ async function syncDocument(docSnap) {
   processingDocs.add(docSnap.ref.path);
 
   try {
-    await retry(() => insertReadingIntoMySQL(reading));
+    await retry(() => insertReadingIntoSQLite(reading));
+
+    const anomaly = detectReadingAnomaly(reading);
+    if (anomaly) {
+      await createAnomalyAlert(reading, anomaly);
+    }
+
     await markDocumentSynced(docSnap);
   } catch (error) {
     console.error(`Failed to sync reading ${docSnap.ref.path}:`, error);
@@ -174,14 +221,14 @@ function startRealtimeSync() {
 }
 
 async function getLast10ReadingsPerDevice() {
+  const db = getDb();
   // Fetch in descending order, then keep only the newest 10 per device in memory.
-  const [rows] = await getPool().query(
-    `
-      SELECT id, user_id, device_id, ph, turbidity, timestamp
-      FROM readings
-      ORDER BY device_id ASC, timestamp DESC, id DESC
-    `
-  );
+  const sql = `
+    SELECT id, user_id, device_id, ph, turbidity, timestamp
+    FROM readings
+    ORDER BY device_id ASC, timestamp DESC, id DESC
+  `;
+  const rows = db.prepare(sql).all();
 
   const grouped = {};
 
@@ -229,5 +276,5 @@ module.exports = {
   startRealtimeSync,
   syncExistingReadings,
   syncDocument,
-  insertReadingIntoMySQL,
+  insertReadingIntoSQLite,
 };

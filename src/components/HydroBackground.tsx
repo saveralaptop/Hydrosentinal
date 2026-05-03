@@ -1,0 +1,227 @@
+import { useEffect, useRef } from "react";
+
+const HydroBackground = () => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const timeRef = useRef(0);
+
+  useEffect(() => {
+    const canvas = canvasRef.current!;
+    const ctx = canvas.getContext("2d")!;
+
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const particles: any[] = [];
+    const floatingOrbs: any[] = [];
+
+    // 🌊 Create main particles with enhanced physics
+    for (let i = 0; i < 80; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = Math.random() * 0.5 + 0.2;
+      particles.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        r: Math.random() * 3 + 0.5,
+        dx: Math.cos(angle) * speed,
+        dy: Math.sin(angle) * speed,
+        baseX: Math.random() * canvas.width,
+        baseY: Math.random() * canvas.height,
+        life: Math.random(),
+        maxLife: Math.random() * 0.5 + 0.5,
+      });
+    }
+
+    // ✨ Create larger glowing orbs
+    for (let i = 0; i < 12; i++) {
+      floatingOrbs.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        r: Math.random() * 8 + 4,
+        dx: (Math.random() - 0.5) * 0.2,
+        dy: (Math.random() - 0.5) * 0.2,
+        opacity: Math.random() * 0.4 + 0.2,
+        color: Math.random() > 0.5 ? [0, 255, 255] : [0, 150, 255],
+      });
+    }
+
+    const drawGradientCircle = (x: number, y: number, r: number, color: number[], opacity: number) => {
+      const gradient = ctx.createRadialGradient(x, y, 0, x, y, r);
+      const [r_, g_, b_] = color;
+      gradient.addColorStop(0, `rgba(${r_},${g_},${b_},${opacity * 0.8})`);
+      gradient.addColorStop(0.5, `rgba(${r_},${g_},${b_},${opacity * 0.3})`);
+      gradient.addColorStop(1, `rgba(${r_},${g_},${b_},0)`);
+      
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    };
+
+    const drawWaveLines = (time: number) => {
+      for (let i = 0; i < 5; i++) {
+        ctx.strokeStyle = `rgba(0,200,255,${0.1 - i * 0.02})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        
+        const offset = (time * 0.5 + i * 60) % canvas.width;
+        const amplitude = 30 + i * 5;
+        const frequency = 0.01 - i * 0.002;
+        
+        for (let x = 0; x < canvas.width; x += 10) {
+          const y = canvas.height * 0.3 + Math.sin(x * frequency + time * 0.02) * amplitude + i * 40;
+          if (x === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+    };
+
+    const draw = () => {
+      // Radial gradient background for more depth
+      const bgGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+      bgGradient.addColorStop(0, "rgba(5, 15, 30, 0)");
+      bgGradient.addColorStop(1, "rgba(2, 8, 20, 0.3)");
+      ctx.fillStyle = bgGradient;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      timeRef.current += 1;
+
+      // Draw wave lines
+      drawWaveLines(timeRef.current);
+
+      // Draw floating orbs with glow
+      floatingOrbs.forEach((orb) => {
+        orb.x += orb.dx;
+        orb.y += orb.dy;
+        orb.opacity += (Math.sin(timeRef.current * 0.01) * 0.1);
+        orb.opacity = Math.max(0.1, Math.min(0.6, orb.opacity));
+
+        if (orb.x > canvas.width + 50) orb.x = -50;
+        if (orb.x < -50) orb.x = canvas.width + 50;
+        if (orb.y > canvas.height + 50) orb.y = -50;
+        if (orb.y < -50) orb.y = canvas.height + 50;
+
+        // Draw outer glow
+        drawGradientCircle(orb.x, orb.y, orb.r * 2, orb.color, orb.opacity * 0.5);
+        // Draw main orb
+        drawGradientCircle(orb.x, orb.y, orb.r, orb.color, orb.opacity);
+      });
+
+      // Draw particles with trails
+      particles.forEach((p) => {
+        // Sine wave motion for more fluid movement
+        p.x += p.dx + Math.sin(timeRef.current * 0.01 + p.baseX) * 0.2;
+        p.y += p.dy + Math.cos(timeRef.current * 0.01 + p.baseY) * 0.2;
+
+        // Wrap around edges
+        if (p.x > canvas.width) p.x = 0;
+        if (p.x < 0) p.x = canvas.width;
+        if (p.y > canvas.height) p.y = 0;
+        if (p.y < 0) p.y = canvas.height;
+
+        // Pulsing opacity
+        const pulse = Math.sin(timeRef.current * 0.02 + p.life * Math.PI * 2) * 0.5 + 0.5;
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        
+        // Gradient for particle
+        const particleGradient = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r * 2);
+        particleGradient.addColorStop(0, `rgba(100,200,255,${0.6 * pulse})`);
+        particleGradient.addColorStop(1, `rgba(0,150,255,${0.2 * pulse})`);
+        ctx.fillStyle = particleGradient;
+        ctx.fill();
+
+        // Glow around particle
+        ctx.strokeStyle = `rgba(0,255,255,${0.3 * pulse})`;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      });
+
+      // Draw connecting lines between nearby particles
+      for (let i = 0; i < particles.length; i++) {
+        for (let j = i + 1; j < particles.length; j++) {
+          const dx = particles[i].x - particles[j].x;
+          const dy = particles[i].y - particles[j].y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+
+          if (distance < 150) {
+            ctx.strokeStyle = `rgba(0,200,255,${0.1 * (1 - distance / 150)})`;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(particles[i].x, particles[i].y);
+            ctx.lineTo(particles[j].x, particles[j].y);
+            ctx.stroke();
+          }
+        }
+      }
+
+      requestAnimationFrame(draw);
+    };
+
+    draw();
+
+    const resize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+
+    window.addEventListener("resize", resize);
+
+    return () => {
+      window.removeEventListener("resize", resize);
+    };
+  }, []);
+
+  return (
+    <>
+      {/* 🌊 REAL IMAGE BACKGROUND */}
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          backgroundImage: "url('/background.jpg')",
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          zIndex: -2,
+        }}
+      />
+
+      {/* 🌫️ PREMIUM GRADIENT OVERLAY */}
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          background:
+            "linear-gradient(135deg, rgba(2,12,27,0.75) 0%, rgba(0,50,100,0.6) 50%, rgba(2,12,27,0.75) 100%)",
+          zIndex: -1,
+        }}
+      />
+
+      {/* 🌊 ANIMATED ELEMENTS LAYER */}
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "radial-gradient(circle at 30% 50%, rgba(0,100,150,0.1), transparent 50%)",
+          zIndex: -1,
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* ✨ ENHANCED PARTICLE ANIMATION */}
+      <canvas
+        ref={canvasRef}
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 0,
+          pointerEvents: "none",
+          filter: "brightness(1.1)",
+        }}
+      />
+    </>
+  );
+};
+
+export default HydroBackground;

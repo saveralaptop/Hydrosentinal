@@ -1,61 +1,37 @@
-const mysql = require("mysql2/promise");
+const Database = require('better-sqlite3');
 require("dotenv").config();
 
-const resolvedConfig = {
-  host: "switchyard.proxy.rlwy.net",
-  port: 57547,
-  user: "root",
-  password: process.env.MYSQL_PASSWORD,
-  database: "railway",
-};
+const dbPath = process.env.DATABASE_PATH || './hydrosentinal.db';
 
-function assertDatabaseConfig() {
-  if (!resolvedConfig.password) {
-    throw new Error(
-      "Missing MYSQL_PASSWORD environment variable. Set it in backend/.env before starting the sync service."
-    );
+let db = null;
+
+function getDb() {
+  if (!db) {
+    db = new Database(dbPath);
+    // Enable WAL mode for better concurrency
+    db.pragma('journal_mode = WAL');
   }
-}
-
-let pool = null;
-
-function getPool() {
-  if (!pool) {
-    pool = mysql.createPool({
-      host: resolvedConfig.host,
-      port: resolvedConfig.port,
-      user: resolvedConfig.user,
-      password: resolvedConfig.password,
-      database: resolvedConfig.database,
-      waitForConnections: true,
-      connectionLimit: 10,
-      queueLimit: 0,
-      timezone: "Z",
-    });
-  }
-
-  return pool;
+  return db;
 }
 
 async function initializeDatabase() {
-  assertDatabaseConfig();
+  const database = getDb();
 
   // Create the readings table if it does not already exist.
-  await getPool().execute(`
+  database.exec(`
     CREATE TABLE IF NOT EXISTS readings (
-      id INT NOT NULL AUTO_INCREMENT,
-      user_id VARCHAR(191) NOT NULL,
-      device_id VARCHAR(191) NOT NULL,
-      ph FLOAT NULL,
-      turbidity FLOAT NULL,
-      timestamp DATETIME NOT NULL,
-      PRIMARY KEY (id),
-      UNIQUE KEY uniq_user_device_timestamp (user_id, device_id, timestamp)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      ph REAL,
+      turbidity REAL,
+      timestamp TEXT NOT NULL,
+      UNIQUE(user_id, device_id, timestamp)
+    );
   `);
 }
 
 module.exports = {
-  getPool,
+  getDb,
   initializeDatabase,
 };
