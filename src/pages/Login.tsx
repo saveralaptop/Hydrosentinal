@@ -6,17 +6,27 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AlertCircle, Lock, User, Eye, EyeOff, CheckCircle2, Info } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { useToast } from "@/hooks/use-toast";
 
 type UserRole = "user" | "admin";
 
 interface ValidationState {
   email: boolean;
   password: boolean;
+  recovery?: boolean;
+  fullName?: boolean;
+  organization?: boolean;
+  username?: boolean;
 }
 
 const DEMO_ACCOUNTS = [
   { email: "user@demo.com", password: "password", role: "user" as UserRole },
   { email: "admin@demo.com", password: "password", role: "admin" as UserRole },
+  { email: "nikhil@admin.com", password: "Nikhil", role: "admin" as UserRole },
+  { email: "harsh@admin.com", password: "Harsh", role: "admin" as UserRole },
+  { email: "himanshu@admin.com", password: "Himanshu", role: "admin" as UserRole },
+  { email: "kartik@admin.com", password: "Kartik", role: "admin" as UserRole },
+  { email: "khushi@admin.com", password: "Khushi", role: "admin" as UserRole },
 ];
 
 export const Login = () => {
@@ -25,11 +35,19 @@ export const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [selectedRole, setSelectedRole] = useState<UserRole>("user");
   const [isLogin, setIsLogin] = useState(true);
+  const [isRecovering, setIsRecovering] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [username, setUsername] = useState("");
+  const [organizationType, setOrganizationType] = useState("");
+  const [customOrganization, setCustomOrganization] = useState("");
+  const [usernameAvailable, setUsernameAvailable] = useState<boolean | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [touched, setTouched] = useState<Partial<ValidationState>>({});
   const [showDemoHint, setShowDemoHint] = useState(false);
-  const { login, signup, user, role } = useAuth();
+  const { login, signup, signupWithProfile, checkUsernameAvailable, resetPasswordWithRecoveryCode, user, role } = useAuth();
+  const { toast } = useToast();
   const navigate = useNavigate();
 
   // Validation helpers
@@ -39,25 +57,62 @@ export const Login = () => {
   };
 
   const validatePassword = (password: string): boolean => {
-    return password.length >= (isLogin ? 1 : 6);
+    if (isLogin) {
+      return password.length > 0;
+    }
+    return password.length >= 6;
   };
 
   const isValidEmail = email.length > 0 && validateEmail(email);
   const isValidPassword = validatePassword(password);
-  const isFormValid = isValidEmail && isValidPassword;
+  const isRecoveryCodeValid = recoveryCode.trim().length > 0;
+  const isSignup = !isLogin && !isRecovering;
+  const isValidFullName = fullName.trim().length > 0;
+  const isValidOrganization = organizationType.trim().length > 0 && (organizationType !== "Other" || customOrganization.trim().length > 0);
+  const isValidUsername = username.trim().length > 0 && /^[a-z0-9_-]+$/.test(username);
+
+  const isFormValid = isLogin
+    ? isValidEmail && isValidPassword
+    : isRecovering
+    ? isValidEmail && isValidPassword && isRecoveryCodeValid
+    : isValidEmail && isValidPassword && isRecoveryCodeValid && isValidFullName && isValidOrganization && isValidUsername && usernameAvailable !== false;
 
   // Reset form when toggling login/signup
   const handleToggleMode = () => {
-    setIsLogin(!isLogin);
+    setIsRecovering(false);
+    const nextLogin = !isLogin;
+    setIsLogin(nextLogin);
+    if (!nextLogin) {
+      setSelectedRole("user");
+      setRecoveryCode("");
+    }
     setError("");
     setTouched({});
   };
 
   // Reset form when changing role
   const handleRoleChange = (newRole: UserRole) => {
+    if (!isLogin) {
+      return;
+    }
+
     setSelectedRole(newRole);
     setError("");
     setTouched({});
+  };
+
+  const handleStartRecovery = () => {
+    setIsRecovering(true);
+    setIsLogin(true);
+    setError("");
+    setTouched({});
+  };
+
+  const handleCancelRecovery = () => {
+    setIsRecovering(false);
+    setError("");
+    setTouched({});
+    setRecoveryCode("");
   };
 
   useEffect(() => {
@@ -73,7 +128,7 @@ export const Login = () => {
     setError("");
     
     // Mark all fields as touched for validation display
-    setTouched({ email: true, password: true });
+    setTouched({ email: true, password: true, recovery: true, fullName: true, organization: true, username: true });
 
     if (!isFormValid) {
       setError("Please fill in all fields correctly");
@@ -83,13 +138,39 @@ export const Login = () => {
     setLoading(true);
 
     try {
+      if (isRecovering) {
+        await resetPasswordWithRecoveryCode(email, password, recoveryCode);
+        setError("Password updated successfully. Please login.");
+        setIsRecovering(false);
+        setTouched({});
+        setRecoveryCode("");
+        return;
+      }
+
       if (isLogin) {
         await login(email, password, selectedRole);
       } else {
-        await signup(email, password, selectedRole);
+        // Signup with profile
+        try {
+          const payload = {
+            email,
+            password,
+            fullName: fullName.trim(),
+            username: username.trim(),
+            organizationType: organizationType,
+            organizationName: organizationType === "Other" ? customOrganization.trim() : undefined,
+            recoveryCode,
+          };
+
+          const { uid, systemId } = await signupWithProfile(payload as any);
+          toast({ title: "Account created", description: `Welcome ${fullName}` });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "Signup failed";
+          setError(msg === "Username already taken" ? "Username already taken" : msg);
+          return;
+        }
       }
 
-      // Redirect based on role
       if (selectedRole === "admin") {
         navigate("/admin");
       } else {
@@ -102,12 +183,12 @@ export const Login = () => {
     }
   };
 
-  const fillDemoCredentials = (demoRole: UserRole) => {
-    const demo = DEMO_ACCOUNTS.find((acc) => acc.role === demoRole);
+  const fillDemoCredentials = (demoEmail: string) => {
+    const demo = DEMO_ACCOUNTS.find((acc) => acc.email === demoEmail);
     if (demo) {
       setEmail(demo.email);
       setPassword(demo.password);
-      setSelectedRole(demoRole);
+      setSelectedRole(demo.role);
       setTouched({ email: true, password: true });
       setShowDemoHint(false);
     }
@@ -233,8 +314,11 @@ export const Login = () => {
                 onClick={() => handleRoleChange("admin")}
                 aria-pressed={selectedRole === "admin"}
                 aria-label="Select admin role"
+                disabled={!isLogin}
                 className={`inline-flex items-center justify-center gap-2 rounded-[1rem] px-4 py-3 text-sm font-semibold transition-all duration-200 ${
-                  selectedRole === "admin"
+                  !isLogin
+                    ? "cursor-not-allowed bg-slate-200 text-slate-400 dark:bg-slate-800/60 dark:text-slate-500"
+                    : selectedRole === "admin"
                     ? "bg-gradient-to-r from-cyan-600 to-cyan-500 text-white shadow-[0_12px_26px_-14px_rgba(8,145,178,0.9)]"
                     : "bg-transparent text-slate-600 hover:bg-white/70 dark:text-slate-300 dark:hover:bg-slate-700/70"
                 }`}
@@ -243,6 +327,12 @@ export const Login = () => {
                 Admin
               </button>
             </div>
+
+            {!isLogin && (
+              <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+                Admin sign up is disabled. Only existing admin accounts can log in.
+              </div>
+            )}
 
             {/* Demo credentials hint */}
             <AnimatePresence>
@@ -272,22 +362,19 @@ export const Login = () => {
                 >
                   <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">Quick login:</p>
                   <div className="space-y-1">
-                    <button
-                      type="button"
-                      onClick={() => fillDemoCredentials("user")}
-                      className="block w-full rounded px-2 py-1.5 text-left text-xs text-slate-700 transition hover:bg-white/60 dark:text-slate-300 dark:hover:bg-slate-700/60"
-                    >
-                      <code className="font-mono text-[0.7rem] text-cyan-700 dark:text-cyan-400">user@demo.com</code>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => fillDemoCredentials("admin")}
-                      className="block w-full rounded px-2 py-1.5 text-left text-xs text-slate-700 transition hover:bg-white/60 dark:text-slate-300 dark:hover:bg-slate-700/60"
-                    >
-                      <code className="font-mono text-[0.7rem] text-cyan-700 dark:text-cyan-400">admin@demo.com</code>
-                    </button>
+                    {DEMO_ACCOUNTS.map((account) => (
+                      <button
+                        key={account.email}
+                        type="button"
+                        onClick={() => fillDemoCredentials(account.email)}
+                        className="block w-full rounded px-2 py-1.5 text-left text-xs text-slate-700 transition hover:bg-white/60 dark:text-slate-300 dark:hover:bg-slate-700/60"
+                      >
+                        <code className="font-mono text-[0.7rem] text-cyan-700 dark:text-cyan-400">{account.email}</code>
+                        <span className="ml-2 text-slate-500 dark:text-slate-400">({account.role})</span>
+                      </button>
+                    ))}
                   </div>
-                  <p className="text-xs text-slate-600 dark:text-slate-400">Password: <code className="font-mono text-cyan-700 dark:text-cyan-400">password</code></p>
+                  <p className="text-xs text-slate-600 dark:text-slate-400">Use the matching password for each account.</p>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -375,6 +462,164 @@ export const Login = () => {
                 )}
               </div>
 
+              {(isSignup || isRecovering) && (
+                <div className="space-y-2">
+                  <label htmlFor="recovery" className="block text-sm font-semibold text-slate-700 dark:text-slate-200">
+                    Recovery Code
+                  </label>
+                  <Input
+                    id="recovery"
+                    type="text"
+                    placeholder="Enter recovery code"
+                    value={recoveryCode}
+                    onChange={(e) => setRecoveryCode(e.target.value)}
+                    onBlur={() => setTouched({ ...touched, recovery: true })}
+                    required
+                    aria-invalid={touched.recovery && !isRecoveryCodeValid}
+                    aria-describedby={touched.recovery && !isRecoveryCodeValid ? "recovery-error" : undefined}
+                    className={`h-12 w-full rounded-2xl border bg-slate-50 px-4 text-slate-700 shadow-inner shadow-slate-100 placeholder:text-slate-400 transition-all focus:ring-2 dark:bg-slate-900/80 dark:text-white dark:shadow-none dark:placeholder:text-slate-500 ${
+                      touched.email
+                        ? isRecoveryCodeValid
+                          ? "border-green-500/50 focus:border-green-500 focus:ring-green-500/20"
+                          : "border-red-500/50 focus:border-red-500 focus:ring-red-500/20"
+                        : "border-slate-200 focus:border-cyan-500 focus:ring-cyan-500/20 dark:border-slate-700"
+                    }`}
+                  />
+                  {touched.recovery && !isRecoveryCodeValid && (
+                    <p id="recovery-error" className="text-xs text-red-600 dark:text-red-400">
+                      Please enter your recovery code.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Additional signup fields */}
+              {isSignup && (
+                <>
+                  <div className="space-y-2">
+                    <label htmlFor="fullName" className="block text-sm font-semibold text-slate-700 dark:text-slate-200">
+                      Full Name
+                    </label>
+                    <div className="relative">
+                      <Input
+                        id="fullName"
+                        type="text"
+                        placeholder="Enter your full name"
+                        value={fullName}
+                        onChange={(e) => setFullName(e.target.value)}
+                        onBlur={() => setTouched({ ...touched, fullName: true })}
+                        required
+                        aria-invalid={!isValidFullName}
+                        className="h-12 w-full rounded-2xl border bg-slate-50 px-4 text-slate-700 dark:bg-slate-900/80 dark:text-white"
+                      />
+                    </div>
+                    {!isValidFullName && touched.email && (
+                      <p className="text-xs text-red-600 dark:text-red-400">Please enter your full name.</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <label htmlFor="organizationType" className="block text-sm font-semibold text-slate-700 dark:text-slate-200">
+                      Organization Type
+                    </label>
+                    <div className="relative">
+                      <select
+                        id="organizationType"
+                        value={organizationType}
+                        onChange={(e) => setOrganizationType(e.target.value)}
+                        onBlur={() => setTouched({ ...touched, organization: true })}
+                        required
+                        className={`h-12 w-full rounded-2xl border bg-slate-50 px-4 text-slate-700 dark:bg-slate-900/80 dark:text-white focus:ring-2 focus:ring-cyan-200`}
+                      >
+                        <option value="">Select your organization type</option>
+                        <option value="School">🏫 School</option>
+                        <option value="College">🎓 College</option>
+                        <option value="Government">🏛️ Government</option>
+                        <option value="Private Company">🏢 Private Company</option>
+                        <option value="NGO">🤝 NGO</option>
+                        <option value="Startup">🚀 Startup</option>
+                        <option value="Other">🔎 Other</option>
+                      </select>
+                    </div>
+                    {!isValidOrganization && touched.organization && (
+                      <p className="text-xs text-red-600 dark:text-red-400">Please select your organization type{organizationType === 'Other' ? ' and provide a name' : ''}.</p>
+                    )}
+
+                    <AnimatePresence>
+                      {organizationType === "Other" && (
+                        <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="mt-2">
+                          <label htmlFor="customOrganization" className="block text-sm font-semibold text-slate-700 dark:text-slate-200">
+                            Enter your organization name
+                          </label>
+                          <Input
+                            id="customOrganization"
+                            type="text"
+                            placeholder="My Local Water NGO"
+                            value={customOrganization}
+                            onChange={(e) => setCustomOrganization(e.target.value)}
+                            onBlur={() => setTouched({ ...touched, organization: true })}
+                            className="mt-1 h-12 w-full rounded-2xl border bg-slate-50 px-4 text-slate-700 dark:bg-slate-900/80 dark:text-white"
+                          />
+                          {organizationType === 'Other' && !customOrganization && touched.organization && (
+                            <p className="text-xs text-red-600 dark:text-red-400">Please enter your organization name.</p>
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label htmlFor="username" className="block text-sm font-semibold text-slate-700 dark:text-slate-200">
+                      Username
+                    </label>
+                    <div className="relative">
+                      <Input
+                        id="username"
+                        type="text"
+                        placeholder="Choose a username (lowercase, no spaces)"
+                        value={username}
+                        onChange={(e) => {
+                          const cleaned = e.target.value.toLowerCase().replace(/\s+/g, "").replace(/[^a-z0-9_-]/g, "");
+                          setUsername(cleaned);
+                          setUsernameAvailable(null);
+                        }}
+                        onBlur={async () => {
+                          setTouched({ ...touched, username: true });
+                          if (!username) return setUsernameAvailable(null);
+                          try {
+                            const ok = await checkUsernameAvailable(username);
+                            setUsernameAvailable(ok);
+                            if (!ok) {
+                              setError("Username already taken");
+                            }
+                          } catch {
+                            setUsernameAvailable(null);
+                          }
+                        }}
+                        required
+                        aria-invalid={usernameAvailable === false || !isValidUsername}
+                        className={`h-12 w-full rounded-2xl border bg-slate-50 px-4 text-slate-700 dark:bg-slate-900/80 dark:text-white ${
+                          usernameAvailable === false ? "border-red-500/50" : ""
+                        }`}
+                      />
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">
+                        {username && (
+                          <span className="font-mono">
+                            {`${(organizationType === 'Other' ? (customOrganization || 'ORG') : (organizationType || 'ORG')).split(" ")[0].toUpperCase()}_${username}`}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {usernameAvailable === false && (
+                      <p className="text-xs text-red-600 dark:text-red-400">Username already taken.</p>
+                    )}
+                    {!isValidUsername && touched.username && (
+                      <p className="text-xs text-red-600 dark:text-red-400">Username must be lowercase, letters/numbers/-/_ only.</p>
+                    )}
+                  </div>
+                </>
+              )}
+
               {/* Error message */}
               <AnimatePresence>
                 {error && (
@@ -408,25 +653,37 @@ export const Login = () => {
               </Button>
             </form>
 
-            {/* Toggle between login and signup */}
-            <div className="mt-5 text-center text-sm text-slate-600 dark:text-slate-400">
-              {isLogin ? "Don't have an account? " : "Already have an account? "}
-              <button
-                type="button"
-                onClick={handleToggleMode}
-                className="font-semibold text-cyan-700 transition hover:text-cyan-800 dark:text-cyan-300 dark:hover:text-cyan-200"
-              >
-                {isLogin ? "Sign Up" : "Login"}
-              </button>
-            </div>
+            {!isRecovering && (
+              <div className="mt-5 text-center text-sm text-slate-600 dark:text-slate-400">
+                {isLogin ? "Don't have an account? " : "Already have an account? "}
+                <button
+                  type="button"
+                  onClick={handleToggleMode}
+                  className="font-semibold text-cyan-700 transition hover:text-cyan-800 dark:text-cyan-300 dark:hover:text-cyan-200"
+                >
+                  {isLogin ? "Sign Up" : "Login"}
+                </button>
+              </div>
+            )}
 
             {/* Forgot password link */}
-            {isLogin && (
+            {isLogin && !isRecovering && (
               <button
                 type="button"
+                onClick={handleStartRecovery}
                 className="mt-3 block w-full text-center text-sm font-semibold text-cyan-700 transition hover:text-cyan-800 dark:text-cyan-400 dark:hover:text-cyan-300"
               >
                 Forgot password?
+              </button>
+            )}
+
+            {isRecovering && (
+              <button
+                type="button"
+                onClick={handleCancelRecovery}
+                className="mt-3 block w-full text-center text-sm font-semibold text-slate-700 transition hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
+              >
+                Back to login
               </button>
             )}
           </div>
