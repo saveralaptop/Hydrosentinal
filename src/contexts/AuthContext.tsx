@@ -4,7 +4,7 @@ import {
   signOut,
 } from "firebase/auth";
 import { auth, db } from "../firebase";
-import { collection, doc, getDoc, getDocs, setDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 
 type UserRole = "user" | "admin";
 
@@ -19,48 +19,27 @@ type LocalAccount = {
   email: string;
   password: string;
   role: UserRole;
-  name?: string;
-  organization?: string;
-  resetCode?: string;
-};
-
-type SignupProfile = {
-  name: string;
-  organization: string;
-  resetCode: string;
 };
 
 const LOCAL_ACCOUNTS_KEY = "hydrosentinel.localAccounts";
 const LOCAL_SESSION_KEY = "hydrosentinel.session";
 const DEMO_ACCOUNTS: LocalAccount[] = [
   {
-    uid: "admin-nikhil",
-    email: "nikhil@admin.com",
-    password: "Nikhil",
+    uid: "demo-user",
+    email: "user@demo.com",
+    password: "password",
+    role: "user",
+  },
+  {
+    uid: "demo-admin",
+    email: "admin@demo.com",
+    password: "password",
     role: "admin",
   },
   {
-    uid: "admin-harsh",
-    email: "harsh@admin.com",
-    password: "Harsh",
-    role: "admin",
-  },
-  {
-    uid: "admin-himanshu",
-    email: "himanshu@admin.com",
-    password: "Himanshu",
-    role: "admin",
-  },
-  {
-    uid: "admin-kartik",
-    email: "kartik@admin.com",
-    password: "Kartik",
-    role: "admin",
-  },
-  {
-    uid: "admin-khushi",
-    email: "khushi@admin.com",
-    password: "Khushi",
+    uid: "demo-admin",
+    email: "admin@demo.com",
+    password: "password",
     role: "admin",
   },
 ];
@@ -70,13 +49,7 @@ interface AuthContextType {
   role: UserRole | null;
   loading: boolean;
   login: (email: string, password: string, role: UserRole) => Promise<void>;
-  signup: (
-    email: string,
-    password: string,
-    role: UserRole,
-    profile: SignupProfile
-  ) => Promise<void>;
-  resetPassword: (email: string, resetCode: string, newPassword: string) => Promise<void>;
+  signup: (email: string, password: string, role: UserRole) => Promise<void>;
   logout: () => Promise<void>;
   getUserRole: () => UserRole | null;
 }
@@ -139,52 +112,11 @@ const readSession = (): { user: AuthUser; role: UserRole } | null => {
   }
 };
 
-const isDemoAccount = (account: LocalAccount) =>
-  DEMO_ACCOUNTS.some((demoAccount) => demoAccount.email.toLowerCase() === account.email.toLowerCase());
-
-const normalizePersistedAccounts = (accounts: LocalAccount[]) =>
-  accounts.filter((account) => !isDemoAccount(account));
-
-const toUserIdPart = (value: string) =>
-  value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-
-const buildUserId = (name: string, email: string, accounts: LocalAccount[]) => {
-  const baseId = toUserIdPart(name) || toUserIdPart(email.split("@")[0]) || "user";
-  const usedIds = new Set(accounts.map((account) => account.uid.toLowerCase()));
-
-  if (!usedIds.has(baseId)) {
-    return baseId;
-  }
-
-  let suffix = 2;
-  let nextId = `${baseId}-${suffix}`;
-
-  while (usedIds.has(nextId)) {
-    suffix += 1;
-    nextId = `${baseId}-${suffix}`;
-  }
-
-  return nextId;
-};
-
-const persistUserDoc = async (
-  uid: string,
-  email: string | null,
-  role: UserRole,
-  profile?: Partial<SignupProfile>
-) => {
+const persistUserDoc = async (uid: string, email: string | null, role: UserRole) => {
   try {
     await setDoc(doc(db, "users", uid), {
       email,
       role,
-      name: profile?.name ?? "",
-      organization: profile?.organization ?? "",
-      resetCode: profile?.resetCode ?? "1234",
-      deviceCount: 0,
       createdAt: new Date().toISOString(),
       locations: role === "user" ? ["default"] : [],
       uniqueId: `USER_${uid.slice(0, 8).toUpperCase()}`,
@@ -196,39 +128,6 @@ const persistUserDoc = async (
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : "Authentication failed";
-
-const findFirestoreUserByEmail = async (email: string) => {
-  try {
-    const snapshot = await getDocs(collection(db, "users"));
-    const matchedDoc = snapshot.docs.find((item) => {
-      const data = item.data() as { email?: string };
-      return data.email?.toLowerCase() === email.toLowerCase();
-    });
-
-    if (!matchedDoc) {
-      return null;
-    }
-
-    const data = matchedDoc.data() as {
-      email?: string;
-      name?: string;
-      organization?: string;
-      resetCode?: string;
-      role?: UserRole;
-    };
-
-    return {
-      uid: matchedDoc.id,
-      email: data.email ?? email,
-      name: data.name,
-      organization: data.organization,
-      resetCode: data.resetCode,
-      role: data.role ?? "user",
-    };
-  } catch {
-    return null;
-  }
-};
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -306,103 +205,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const signup = async (
     email: string,
     password: string,
-    selectedRole: UserRole,
-    profile: SignupProfile
+    selectedRole: UserRole
   ) => {
-    if (selectedRole !== "user") {
-      throw new Error("Admin signup is not allowed");
-    }
-
-    const trimmedName = profile.name.trim();
-    const organization = profile.organization.trim();
-    const resetCode = profile.resetCode.trim();
-
-    if (!trimmedName || !organization || !/^\d{4}$/.test(resetCode)) {
-      throw new Error("Name, organization, and a 4 digit code are required");
-    }
-
-    const allAccounts = readLocalAccounts();
     const nextAccount: LocalAccount = {
-      uid: buildUserId(trimmedName, email, allAccounts),
+      uid: crypto.randomUUID(),
       email,
       password,
       role: selectedRole,
-      name: trimmedName,
-      organization,
-      resetCode,
     };
 
-    const existingAccounts = allAccounts.filter(
+    const existingAccounts = readLocalAccounts().filter(
       (account) => account.email.toLowerCase() !== email.toLowerCase()
     );
 
-    saveLocalAccounts(normalizePersistedAccounts([...existingAccounts, nextAccount]));
-    await persistUserDoc(nextAccount.uid, email, selectedRole, {
-      name: trimmedName,
-      organization,
-      resetCode,
-    });
+    saveLocalAccounts([...existingAccounts, nextAccount]);
+    await persistUserDoc(nextAccount.uid, email, selectedRole);
     setAuthState(
       { uid: nextAccount.uid, email: nextAccount.email, provider: "local" },
       selectedRole
     );
-  };
-
-  const resetPassword = async (email: string, resetCode: string, newPassword: string) => {
-    const trimmedEmail = email.trim().toLowerCase();
-    const trimmedCode = resetCode.trim();
-    const nextPassword = newPassword.trim();
-
-    if (!trimmedEmail || !/^\d{4}$/.test(trimmedCode) || !nextPassword) {
-      throw new Error("Email, 4 digit code, and new password are required");
-    }
-
-    const allAccounts = readLocalAccounts();
-    const account = allAccounts.find(
-      (item) => item.email.toLowerCase() === trimmedEmail && item.role === "user"
-    );
-
-    const firestoreUser = account ? null : await findFirestoreUserByEmail(trimmedEmail);
-
-    if (!account && !firestoreUser) {
-      throw new Error("User account not found");
-    }
-
-    if (firestoreUser?.role !== "user" && !account) {
-      throw new Error("User account not found");
-    }
-
-    const savedCode = account?.resetCode ?? firestoreUser?.resetCode ?? "1234";
-
-    if (savedCode !== trimmedCode) {
-      throw new Error("Invalid recovery code");
-    }
-
-    const resetAccount: LocalAccount = account
-      ? { ...account, password: nextPassword, resetCode: savedCode }
-      : {
-          uid: firestoreUser!.uid,
-          email: firestoreUser!.email,
-          password: nextPassword,
-          role: "user",
-          name: firestoreUser!.name,
-          organization: firestoreUser!.organization,
-          resetCode: savedCode,
-        };
-
-    const nextAccounts = allAccounts
-      .filter((item) => item.email.toLowerCase() !== trimmedEmail)
-      .concat(resetAccount);
-
-    saveLocalAccounts(normalizePersistedAccounts(nextAccounts));
-
-    if (firestoreUser) {
-      await setDoc(
-        doc(db, "users", firestoreUser.uid),
-        { resetCode: savedCode },
-        { merge: true }
-      );
-    }
   };
 
   const logout = async () => {
@@ -421,7 +242,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   return (
     <AuthContext.Provider
-      value={{ user, role, loading, login, signup, resetPassword, logout, getUserRole }}
+      value={{ user, role, loading, login, signup, logout, getUserRole }}
     >
       {children}
     </AuthContext.Provider>

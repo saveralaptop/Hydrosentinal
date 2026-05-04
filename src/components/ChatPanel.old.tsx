@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Send, Sparkles, Loader2, Mic, MicOff, Volume2, VolumeX, Settings2, Play, Pause } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -21,8 +21,6 @@ const QUICK_COMMANDS = [
   { cmd: "/alert", label: "Alerts", icon: "🚨" },
   { cmd: "/guide", label: "Guide", icon: "📖" },
 ];
-
-const QUICK_FOLLOW_UPS = SUGGESTIONS;
 
 const cleanForSpeech = (text: string) =>
   text
@@ -120,10 +118,6 @@ export const ChatPanel = () => {
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [handsFreeVoiceMode, setHandsFreeVoiceMode] = useState(true);
   const [showAudioSettings, setShowAudioSettings] = useState(false);
-  const [showFirstOpenActions, setShowFirstOpenActions] = useState(() => {
-    if (typeof window === "undefined") return true;
-    return localStorage.getItem("chat-first-open-actions-seen") !== "1";
-  });
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [selectedVoiceURI, setSelectedVoiceURI] = useState<string>("");
   const [voiceRate, setVoiceRate] = useState(0.95);
@@ -215,12 +209,6 @@ export const ChatPanel = () => {
   }, [loading]);
 
   useEffect(() => {
-    if (!showFirstOpenActions) {
-      localStorage.setItem("chat-first-open-actions-seen", "1");
-    }
-  }, [showFirstOpenActions]);
-
-  useEffect(() => {
     handsFreeRef.current = handsFreeVoiceMode;
     localStorage.setItem("chat-hands-free-mode", handsFreeVoiceMode ? "1" : "0");
   }, [handsFreeVoiceMode]);
@@ -306,46 +294,29 @@ export const ChatPanel = () => {
     speakNext();
   };
 
-  async function send(text: string) {
-    const q = text.trim();
-    if (!q || loading) return;
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== "assistant") return;
+    spokenMessageRef.current = last.content;
 
-    if (showFirstOpenActions) {
-      setShowFirstOpenActions(false);
+    // Keep voice playback manual; auto-restart listening for hands-free loop.
+    if (
+      handsFreeRef.current &&
+      shouldContinueListeningRef.current &&
+      !loadingRef.current &&
+      !isListening
+    ) {
+      setTimeout(() => {
+        if (
+          handsFreeRef.current &&
+          shouldContinueListeningRef.current &&
+          !loadingRef.current
+        ) {
+          startVoiceInput(true);
+        }
+      }, 180);
     }
-
-    const userMsg: Msg = { role: "user", content: q };
-    setMessages((m) => [...m, userMsg].slice(-50));
-    setInput("");
-    setLoading(true);
-
-    try {
-      const { data, error } = await supabase.functions.invoke("ask", {
-        body: { question: q },
-      });
-
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-
-      const botMsg: Msg = {
-        role: "assistant",
-        content: normalizeAssistantText(data.answer ?? "(no response)"),
-      };
-
-      setMessages((m) => [...m, botMsg].slice(-50));
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to get answer";
-
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", content: `⚠️ ${msg}` },
-      ]);
-
-      toast.error(msg);
-    } finally {
-      setLoading(false);
-    }
-  }
+  }, [messages, isListening]);
 
   function startVoiceInput(fromAutoLoop = false) {
     if (isListening || loadingRef.current) return;
@@ -458,37 +429,13 @@ export const ChatPanel = () => {
     }
   }
 
-  function stopVoiceInput() {
+  const stopVoiceInput = () => {
     shouldContinueListeningRef.current = false;
     recognitionRef.current?.stop();
     recognitionRef.current?.abort?.();
     finalTranscriptRef.current = "";
     setIsListening(false);
-  }
-
-  useEffect(() => {
-    const last = messages[messages.length - 1];
-    if (!last || last.role !== "assistant") return;
-    spokenMessageRef.current = last.content;
-
-    // Keep voice playback manual; auto-restart listening for hands-free loop.
-    if (
-      handsFreeRef.current &&
-      shouldContinueListeningRef.current &&
-      !loadingRef.current &&
-      !isListening
-    ) {
-      setTimeout(() => {
-        if (
-          handsFreeRef.current &&
-          shouldContinueListeningRef.current &&
-          !loadingRef.current
-        ) {
-          startVoiceInput(true);
-        }
-      }, 180);
-    }
-  }, [messages, isListening]);
+  };
 
   const lastAssistantMessage = [...messages].reverse().find((m) => m.role === "assistant")?.content ?? "";
 
@@ -540,19 +487,56 @@ export const ChatPanel = () => {
         ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
         : "border-white/15 bg-white/5 text-muted-foreground";
 
+  async function send(text: string) {
+    const q = text.trim();
+    if (!q || loading) return;
+
+    const userMsg: Msg = { role: "user", content: q };
+    setMessages((m) => [...m, userMsg].slice(-50));
+    setInput("");
+    setLoading(true);
+
+    try {
+      const { data, error } = await supabase.functions.invoke("ask", {
+        body: { question: q },
+      });
+
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      const botMsg: Msg = {
+        role: "assistant",
+        content: normalizeAssistantText(data.answer ?? "(no response)"),
+      };
+
+      setMessages((m) => [...m, botMsg].slice(-50));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to get answer";
+
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", content: `⚠️ ${msg}` },
+      ]);
+
+      toast.error(msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     // <div className="flex h-full flex-col rounded-2xl border border-border bg-card shadow-card">
     <div className="flex h-[500px] flex-col rounded-2xl border border-border bg-card shadow-card">
     
-      <div className="flex items-center justify-between gap-2 border-b border-border px-5 py-4 bg-gradient-to-b from-background/80 to-background/40">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-cyan-400 to-emerald-400 text-white font-bold text-sm shadow-lg shadow-cyan-500/25">
-            💧
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-foreground">AI Water Expert</p>
-            <p className="text-xs text-muted-foreground">Powered by HydroSentinel</p>
-          </div>
+      <div className="flex items-center justify-between gap-2 border-b border-border px-5 py-4">
+        <div className="flex items-center gap-2">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
+          <Sparkles className="h-4 w-4" />
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-foreground">Ask HydroSentinel</p>
+          <p className="text-xs text-muted-foreground">Made by Nikhil kumar</p>
+        </div>
         </div>
 
         <Button
@@ -686,134 +670,39 @@ export const ChatPanel = () => {
 
       <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4" ref={containerRef}>
         {messages.map((m, i) => (
-          <div key={i} className="space-y-2">
-            <div className={`flex gap-2 ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-              {m.role === "assistant" && (
-                <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-cyan-400 to-emerald-400 text-white font-bold text-xs">🤖</div>
-              )}
-              <div
-                className={`max-w-[78%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-                  m.role === "user"
-                    ? "bg-gradient-to-r from-cyan-500 to-emerald-500 text-white shadow-lg shadow-cyan-500/25 rounded-br-none"
-                    : "bg-secondary text-secondary-foreground rounded-bl-none"
-                }`}
-              >
-                {m.content}
-              </div>
-              {m.role === "user" && (
-                <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-slate-300 to-slate-400 dark:from-slate-600 dark:to-slate-700 text-white font-bold text-xs">👤</div>
-              )}
+          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+            <div
+              className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                m.role === "user"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-secondary text-secondary-foreground"
+              }`}
+            >
+              {m.content}
             </div>
-
           </div>
         ))}
         {loading && (
-          <div className="flex gap-2 justify-start">
-            <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-cyan-400 to-emerald-400 text-white font-bold text-xs">🤖</div>
-            <div className="flex items-center gap-1.5 rounded-2xl bg-secondary px-4 py-2.5 text-sm text-muted-foreground rounded-bl-none">
-              <span className="flex h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
-              <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" style={{ animationDelay: "0.2s" }} />
-              <span className="flex h-2 w-2 rounded-full bg-cyan-400 animate-pulse" style={{ animationDelay: "0.4s" }} />
+          <div className="flex justify-start">
+            <div className="flex items-center gap-2 rounded-2xl bg-secondary px-4 py-2.5 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Thinking…
             </div>
           </div>
         )}
         <div ref={endRef} />
       </div>
 
-      {showFirstOpenActions && messages.length <= 1 && (
-        <div className="space-y-2 px-5 pb-3">
-          <div className="grid grid-cols-2 gap-2">
-            {SUGGESTIONS.map((s) => (
-              <button
-                key={s.text}
-                type="button"
-                onClick={() => {
-                  setShowFirstOpenActions(false);
-                  void send(s.text);
-                }}
-                className="group flex flex-col items-start gap-1.5 rounded-xl border border-border/60 bg-secondary/40 p-2.5 text-left transition hover:border-primary/50 hover:bg-secondary/60"
-              >
-                <span className="text-lg">{s.icon}</span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-foreground">{s.desc}</p>
-                  <p className="text-xs text-muted-foreground line-clamp-1">{s.text}</p>
-                </div>
-              </button>
-            ))}
-          </div>
-          <div className="rounded-lg border border-border/50 bg-secondary/30 px-3 py-2">
-            <p className="text-xs font-semibold text-muted-foreground mb-2">⚡ Quick Commands:</p>
-            <div className="flex flex-wrap gap-1.5">
-              {QUICK_COMMANDS.map((cmd) => (
-                <button
-                  key={cmd.cmd}
-                  type="button"
-                  onClick={() => {
-                    setShowFirstOpenActions(false);
-                    void send(cmd.cmd);
-                  }}
-                  className="inline-flex items-center gap-1 rounded-md bg-background/50 px-2.5 py-1 text-xs font-mono text-muted-foreground transition hover:bg-primary/10 hover:text-primary"
-                >
-                  <span>{cmd.icon}</span>
-                  <span className="font-bold">{cmd.cmd}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showCommandPalette && (
-        <div className="border-t border-border/60 bg-background/80 px-5 py-3">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-              Quick actions
-            </p>
+      {messages.length <= 1 && (
+        <div className="flex flex-wrap gap-2 px-5 pb-3">
+          {SUGGESTIONS.map((s) => (
             <button
-              type="button"
-              onClick={() => setShowCommandPalette(false)}
-              className="text-xs text-muted-foreground hover:text-foreground"
+              key={s.text}
+              onClick={() => send(s.text)}
+              className="rounded-full border border-border bg-secondary/60 px-3 py-1 text-xs text-muted-foreground transition hover:border-primary/50 hover:text-foreground"
             >
-              Close
+              {s.text}
             </button>
-          </div>
-
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            {SUGGESTIONS.map((suggestion) => (
-              <button
-                key={suggestion.text}
-                type="button"
-                onClick={() => {
-                  setShowCommandPalette(false);
-                  void send(suggestion.text);
-                }}
-                className="flex items-start gap-2 rounded-xl border border-border/60 bg-secondary/40 p-2.5 text-left transition hover:border-primary/50 hover:bg-secondary/60"
-              >
-                <span className="mt-0.5 text-base">{suggestion.icon}</span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-foreground">{suggestion.desc}</p>
-                  <p className="text-xs text-muted-foreground line-clamp-1">{suggestion.text}</p>
-                </div>
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {QUICK_COMMANDS.map((cmd) => (
-              <button
-                key={cmd.cmd}
-                type="button"
-                onClick={() => {
-                  setShowCommandPalette(false);
-                  void send(cmd.cmd);
-                }}
-                className="inline-flex items-center gap-1 rounded-md bg-background/60 px-2.5 py-1 text-xs font-mono text-muted-foreground transition hover:bg-primary/10 hover:text-primary"
-              >
-                <span>{cmd.icon}</span>
-                <span className="font-bold">{cmd.cmd}</span>
-              </button>
-            ))}
-          </div>
+          ))}
         </div>
       )}
 
@@ -822,23 +711,13 @@ export const ChatPanel = () => {
           e.preventDefault();
           send(input);
         }}
-        className="flex items-center gap-2 border-t border-border px-3 py-3 bg-gradient-to-t from-background/60 to-background"
+        className="flex items-center gap-2 border-t border-border px-3 py-3"
       >
-        <Button
-          type="button"
-          size="icon"
-          variant="outline"
-          onClick={() => setShowCommandPalette((v) => !v)}
-          title="Quick actions"
-          className="h-10 w-10 shrink-0 rounded-full"
-        >
-          <Sparkles className="h-4 w-4" />
-        </Button>
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask about the water…"
-          className="flex-1 rounded-xl border border-input/60 bg-background px-3 py-2.5 text-sm text-foreground outline-none ring-primary/30 placeholder:text-muted-foreground focus:border-primary/50 focus:ring-2"
+          className="flex-1 rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground outline-none ring-ring/50 placeholder:text-muted-foreground focus:ring-2"
           maxLength={500}
         />
         <Button
@@ -854,11 +733,10 @@ export const ChatPanel = () => {
           }}
           disabled={loading || !voiceInputSupported}
           title={isListening ? "Stop voice input" : "Start voice input"}
-          className={isListening ? "bg-red-500/20 border-red-500/40 text-red-600 hover:bg-red-500/30" : ""}
         >
           {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
         </Button>
-        <Button type="submit" size="icon" disabled={loading || !input.trim()} className="bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-600 hover:to-emerald-600 text-white">
+        <Button type="submit" size="icon" disabled={loading || !input.trim()}>
           <Send className="h-4 w-4" />
         </Button>
       </form>

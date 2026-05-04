@@ -48,7 +48,7 @@ describe("Excel sync", () => {
           tds: 100 + index,
           turbidity: 5,
           temperature: 25,
-          status: "SAFE",
+          status: "SAFE" as const,
       })),
     };
 

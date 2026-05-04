@@ -25,6 +25,9 @@ L.Icon.Default.mergeOptions({
     "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
 });
 
+const MapContainerAny = MapContainer as any;
+const TileLayerAny = TileLayer as any;
+
 interface Device {
   id?: string;
   name?: string;
@@ -124,14 +127,14 @@ export default function MapView({ devices }: MapViewProps) {
   const center: [number, number] = [centerLat, centerLng];
 
   return (
-    <MapContainer
+    <MapContainerAny
       center={center}
       zoom={6}
       className="w-full h-[400px] rounded-lg shadow-md"
       style={{ height: "400px", width: "100%" }}
     >
       {/* Google Satellite View TileLayer */}
-      <TileLayer
+      <TileLayerAny
         url="https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}"
         attribution='&copy; <a href="https://www.google.com">Google</a>'
         subdomains={["mt0", "mt1", "mt2", "mt3"]}
@@ -184,6 +187,6 @@ export default function MapView({ devices }: MapViewProps) {
           </Popup>
         </Marker>
       ))}
-    </MapContainer>
+    </MapContainerAny>
   );
 }
