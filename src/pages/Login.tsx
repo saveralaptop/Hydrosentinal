@@ -22,11 +22,6 @@ interface ValidationState {
 const DEMO_ACCOUNTS = [
   { email: "user@demo.com", password: "password", role: "user" as UserRole },
   { email: "admin@demo.com", password: "password", role: "admin" as UserRole },
-  { email: "nikhil@admin.com", password: "Nikhil", role: "admin" as UserRole },
-  { email: "harsh@admin.com", password: "Harsh", role: "admin" as UserRole },
-  { email: "himanshu@admin.com", password: "Himanshu", role: "admin" as UserRole },
-  { email: "kartik@admin.com", password: "Kartik", role: "admin" as UserRole },
-  { email: "khushi@admin.com", password: "Khushi", role: "admin" as UserRole },
 ];
 
 export const Login = () => {

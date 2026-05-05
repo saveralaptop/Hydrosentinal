@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   LineChart,
   Line,
@@ -31,7 +32,10 @@ type DotRendererProps = {
 };
 
 export const WaterGraph = ({ data, type, title = "Graph", color = "#3b82f6", unit = "" }: Props) => {
-  const visibleData = data.slice(-10).map((point, index) => ({ ...point, time: index + 1 }));
+  const visibleData = useMemo(
+    () => data.slice(-10).map((point, index) => ({ ...point, time: index + 1 })),
+    [data],
+  );
 
   const computeDomain = () => {
     if (type === "ph") return [0, 14];
@@ -43,6 +47,7 @@ export const WaterGraph = ({ data, type, title = "Graph", color = "#3b82f6", uni
     const maxT = Math.max(25, ...(data.map((d) => d.turbidity ?? 0)));
     return [0, Math.ceil(maxT + 10)];
   };
+  const yDomain = useMemo(computeDomain, [data, type]);
 
   return (
     <div className="bg-white/5 backdrop-blur-md rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-[1.02] transition duration-300">
@@ -52,7 +57,7 @@ export const WaterGraph = ({ data, type, title = "Graph", color = "#3b82f6", uni
         <LineChart data={visibleData}>
           <CartesianGrid stroke="#0b1220" strokeDasharray="3 6" />
           <XAxis dataKey="time" stroke="#94a3b8" />
-          <YAxis stroke="#94a3b8" domain={computeDomain()} />
+          <YAxis stroke="#94a3b8" domain={yDomain} />
           <Tooltip
             contentStyle={{
               backgroundColor: "#0f172a",
@@ -70,7 +75,7 @@ export const WaterGraph = ({ data, type, title = "Graph", color = "#3b82f6", uni
                 strokeWidth={2}
                 dot={{ r: 4 }}
                 activeDot={{ r: 6 }}
-                isAnimationActive={false}
+                isAnimationActive
               />
             </>
           )}
@@ -100,7 +105,7 @@ export const WaterGraph = ({ data, type, title = "Graph", color = "#3b82f6", uni
                 }}
 
                 activeDot={{ r: 6 }}
-                isAnimationActive={false}
+                isAnimationActive
               />
               <Line
                 type="monotone"
@@ -123,7 +128,7 @@ export const WaterGraph = ({ data, type, title = "Graph", color = "#3b82f6", uni
                 }}
 
                 activeDot={{ r: 6 }}
-                isAnimationActive={false}
+                isAnimationActive
               />
             </>
           )}

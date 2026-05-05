@@ -5,15 +5,17 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 // import Loader from "./components/Loader.tsx";
 import NotFound from "./pages/NotFound.tsx";
-import Login from "./pages/Login.tsx";
-import Index from "./pages/Index.tsx";
-import UserDashboard from "./pages/UserDashboard.tsx";
-import AdminPanel from "./pages/AdminPanel.tsx";
 import HydroBackground from "./components/HydroBackground";
 import AppErrorBoundary from "./components/AppErrorBoundary";
+import { Skeleton } from "@/components/ui/skeleton";
+
+const Login = lazy(() => import("./pages/Login.tsx"));
+const Index = lazy(() => import("./pages/Index.tsx"));
+const UserDashboard = lazy(() => import("./pages/UserDashboard.tsx"));
+const AdminPanel = lazy(() => import("./pages/AdminPanel.tsx"));
 
 const queryClient = new QueryClient();
 
@@ -30,7 +32,14 @@ const ProtectedRoute = ({
   if (loading) {
     return (
       <div className="min-h-screen bg-transparent flex items-center justify-center">
-        <div className="text-white text-xl">Loading...</div>
+        <div className="w-full max-w-3xl space-y-4 px-4">
+          <Skeleton className="h-8 w-48 rounded-lg" />
+          <div className="grid grid-cols-2 gap-4">
+            <Skeleton className="h-24 rounded-2xl" />
+            <Skeleton className="h-24 rounded-2xl" />
+          </div>
+          <Skeleton className="h-64 rounded-3xl" />
+        </div>
       </div>
     );
   }
@@ -69,35 +78,50 @@ const AppRoutes = () => {
   }
 
   return (
-    <Routes>
-      {/* Public routes */}
-      <Route path="/" element={<Index />} />
-      <Route path="/login" element={<Login />} />
-      <Route path="/home" element={<Index />} />
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-transparent flex items-center justify-center px-4">
+          <div className="w-full max-w-3xl space-y-4">
+            <Skeleton className="h-8 w-48 rounded-lg" />
+            <div className="grid grid-cols-2 gap-4">
+              <Skeleton className="h-24 rounded-2xl" />
+              <Skeleton className="h-24 rounded-2xl" />
+            </div>
+            <Skeleton className="h-64 rounded-3xl" />
+          </div>
+        </div>
+      }
+    >
+      <Routes>
+        {/* Public routes */}
+        <Route path="/" element={<Index />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/home" element={<Index />} />
 
-      {/* User routes */}
-      <Route
-        path="/dashboard"
-        element={
-          <ProtectedRoute requiredRole="user">
-            <UserDashboard />
-          </ProtectedRoute>
-        }
-      />
+        {/* User routes */}
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute requiredRole="user">
+              <UserDashboard />
+            </ProtectedRoute>
+          }
+        />
 
-      {/* Admin routes */}
-      <Route
-        path="/admin"
-        element={
-          <ProtectedRoute requiredRole="admin">
-            <AdminPanel />
-          </ProtectedRoute>
-        }
-      />
+        {/* Admin routes */}
+        <Route
+          path="/admin"
+          element={
+            <ProtectedRoute requiredRole="admin">
+              <AdminPanel />
+            </ProtectedRoute>
+          }
+        />
 
-      {/* Catch all */}
-      <Route path="*" element={<NotFound />} />
-    </Routes>
+        {/* Catch all */}
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </Suspense>
   );
 };
 

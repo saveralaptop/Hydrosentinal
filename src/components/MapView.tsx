@@ -1,32 +1,20 @@
 import { useEffect, useRef } from "react";
-import {
-  MapContainer,
-  TileLayer,
-  Marker,
-  Popup,
-  useMap,
-} from "react-leaflet";
+import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
 import L from "leaflet";
 import type { LatLngBounds } from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-// Fix leaflet default icon issue
 interface LeafletIconDefaultProto {
   _getIconUrl?: unknown;
 }
+
 const iconDefaultPrototype = L.Icon.Default.prototype as LeafletIconDefaultProto;
 delete iconDefaultPrototype._getIconUrl;
 L.Icon.Default.mergeOptions({
-  iconRetinaUrl:
-    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png",
-  iconUrl:
-    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png",
-  shadowUrl:
-    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
+  iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png",
+  iconUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png",
+  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
 });
-
-const MapContainerAny = MapContainer as any;
-const TileLayerAny = TileLayer as any;
 
 interface Device {
   id?: string;
@@ -127,18 +115,15 @@ export default function MapView({ devices }: MapViewProps) {
   const center: [number, number] = [centerLat, centerLng];
 
   return (
-    <MapContainerAny
+    <MapContainer
       center={center}
       zoom={6}
       className="w-full h-[400px] rounded-lg shadow-md"
       style={{ height: "400px", width: "100%" }}
     >
-      {/* Google Satellite View TileLayer */}
-      <TileLayerAny
-        url="https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}"
-        attribution='&copy; <a href="https://www.google.com">Google</a>'
-        subdomains={["mt0", "mt1", "mt2", "mt3"]}
-        maxZoom={20}
+      <TileLayer
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
       />
 
       {/* Auto-zoom component */}
@@ -187,6 +172,6 @@ export default function MapView({ devices }: MapViewProps) {
           </Popup>
         </Marker>
       ))}
-    </MapContainerAny>
+    </MapContainer>
   );
 }

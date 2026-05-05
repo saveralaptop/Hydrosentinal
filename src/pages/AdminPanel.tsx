@@ -44,12 +44,8 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import {
   DeviceRecord,
   DeviceReading,
-  appendLocalDeviceReading,
   getLocalDeviceHistory,
-  getLocalDevicesByOwner,
   removeLocalDevice,
-  readLocalDevices,
-  upsertLocalDevice,
 } from "@/lib/deviceStore";
 
 type UserRole = "user" | "admin";
@@ -95,8 +91,6 @@ type DeviceEditForm = {
   createdAt: string;
 };
 
-const DEMO_USERS: UserSummary[] = [];
-
 const LOCAL_ACCOUNTS_KEY = "hydrosentinel.localAccounts";
 
 const DEMO_ACCOUNT_EMAILS = new Set(["user@demo.com", "admin@demo.com"]);
@@ -106,12 +100,6 @@ const formatDate = (value?: string) => {
 
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
-};
-
-const mergeById = <T extends { id: string }>(primary: T[], fallback: T[]) => {
-  const merged = new Map<string, T>();
-  [...fallback, ...primary].forEach((entry) => merged.set(entry.id, entry));
-  return Array.from(merged.values());
 };
 
 const parseList = (value: string) =>
@@ -173,38 +161,7 @@ const deleteLocalAccount = (userId: string) => {
   }
 };
 
-const readLocalUsers = (): UserSummary[] => {
-  if (typeof window === "undefined") {
-    return DEMO_USERS;
-  }
-
-  try {
-    const rawAccounts = window.localStorage.getItem(LOCAL_ACCOUNTS_KEY);
-    if (!rawAccounts) {
-      return DEMO_USERS;
-    }
-
-    const parsed = JSON.parse(rawAccounts) as Array<{
-      uid: string;
-      email: string;
-      role: UserRole;
-      deviceCount?: number;
-    }>;
-
-    const localMapped: UserSummary[] = parsed.map((item) => ({
-      id: item.uid,
-      email: item.email,
-      role: item.role,
-      deviceCount: item.deviceCount,
-    }));
-
-    const unique = new Map<string, UserSummary>();
-    [...DEMO_USERS, ...localMapped].forEach((entry) => unique.set(entry.id, entry));
-    return Array.from(unique.values());
-  } catch {
-    return DEMO_USERS;
-  }
-};
+const normalizeEmail = (value?: string) => (value ?? "").trim().toLowerCase();
 
 export const AdminPanel = () => {
   const { user, role, logout } = useAuth();
@@ -213,6 +170,8 @@ export const AdminPanel = () => {
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [devices, setDevices] = useState<DeviceRecord[]>([]);
+  const [firestoreDeviceCount, setFirestoreDeviceCount] = useState(0);
+  const [liveSyncHealthy, setLiveSyncHealthy] = useState(true);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [selectedHistory, setSelectedHistory] = useState<DeviceReading[]>([]);
@@ -257,10 +216,15 @@ export const AdminPanel = () => {
   }, [role, loading, navigate]);
 
   useEffect(() => {
+    if (!user) {
+      navigate("/login");
+      return;
+    }
+
     const unsubscribeUsers = onSnapshot(
       collection(db, "users"),
-      (usersSnap) => {
-        const remoteUsers: UserSummary[] = usersSnap.docs.map((item) => {
+      async (usersSnap) => {
+        const remoteUsersRaw: UserSummary[] = usersSnap.docs.map((item) => {
           const data = item.data() as {
             email?: string;
             role?: UserRole;
@@ -278,7 +242,7 @@ export const AdminPanel = () => {
 
           return {
             id: item.id,
-            email: data.email ?? "unknown@user",
+            email: normalizeEmail(data.email) || "unknown@user",
             role: data.role ?? "user",
             deviceCount: data.deviceCount ?? 0,
             name: data.name,
@@ -293,16 +257,67 @@ export const AdminPanel = () => {
           };
         });
 
-        const mergedUsers = mergeById(remoteUsers, readLocalUsers());
-        setUsers(mergedUsers);
-        setSelectedUserId((prev) => prev ?? mergedUsers.find((u) => u.role === "user")?.id ?? null);
+        const uniqueById = new Map<string, UserSummary>();
+        const seenEmails = new Map<string, string>();
+        const duplicateEmailDocIds: string[] = [];
+
+        for (const entry of remoteUsersRaw) {
+          if (uniqueById.has(entry.id)) {
+            continue;
+          }
+
+          const normalized = normalizeEmail(entry.email);
+          if (normalized && seenEmails.has(normalized)) {
+            duplicateEmailDocIds.push(entry.id);
+            continue;
+          }
+
+          if (normalized) {
+            seenEmails.set(normalized, entry.id);
+          }
+
+          uniqueById.set(entry.id, entry);
+        }
+
+        const uniqueUsers = Array.from(uniqueById.values());
+
+        // Debug fetched users and duplication patterns for admin troubleshooting.
+        console.groupCollapsed("[AdminPanel] users snapshot");
+        console.log("totalDocs", usersSnap.size);
+        console.log("uniqueUsers", uniqueUsers.length);
+        console.table(
+          remoteUsersRaw.map((entry) => ({
+            id: entry.id,
+            email: entry.email,
+            role: entry.role,
+          }))
+        );
+        if (duplicateEmailDocIds.length > 0) {
+          console.warn("Duplicate email docs detected", duplicateEmailDocIds);
+        }
+        console.groupEnd();
+
+        // Cleanup pass: remove duplicate docs by email, keeping first seen entry.
+        if (duplicateEmailDocIds.length > 0) {
+          try {
+            await Promise.all(
+              duplicateEmailDocIds.map((docId) =>
+                deleteDoc(doc(db, "users", docId))
+              )
+            );
+          } catch (cleanupError) {
+            console.error("Failed to cleanup duplicate user docs:", cleanupError);
+          }
+        }
+
+        setUsers(uniqueUsers);
+        setSelectedUserId((prev) => prev ?? uniqueUsers.find((u) => u.role === "user")?.id ?? null);
         setLoading(false);
       },
       (error) => {
         console.error("Error loading admin users:", error);
-        const fallbackUsers = readLocalUsers();
-        setUsers(fallbackUsers);
-        setSelectedUserId((prev) => prev ?? fallbackUsers.find((u) => u.role === "user")?.id ?? null);
+        setUsers([]);
+        setSelectedUserId(null);
         setLoading(false);
       }
     );
@@ -310,17 +325,38 @@ export const AdminPanel = () => {
     const unsubscribeDevices = onSnapshot(
       collection(db, "devices"),
       (devicesSnap) => {
-        const remoteDevices: DeviceRecord[] = devicesSnap.docs.map((item) => ({
+        console.groupCollapsed("[AdminPanel] devices snapshot");
+        console.log("snapshotSize", devicesSnap.size);
+        const remoteRaw = devicesSnap.docs.map((item) => ({
           id: item.id,
           ...(item.data() as Omit<DeviceRecord, "id">),
         }));
 
-        setDevices(mergeById(remoteDevices, readLocalDevices()));
+        // Ensure unique devices by id (defensive)
+        const unique = new Map<string, DeviceRecord>();
+        const duplicateIds: string[] = [];
+        for (const d of remoteRaw) {
+          if (unique.has(d.id)) {
+            duplicateIds.push(d.id);
+            continue;
+          }
+          unique.set(d.id, d);
+        }
+
+        const remoteDevices = Array.from(unique.values());
+        console.log("remoteDevicesCount", remoteDevices.length, "duplicates", duplicateIds);
+
+        setFirestoreDeviceCount(devicesSnap.size);
+        setDevices(remoteDevices);
+        setLiveSyncHealthy(true);
         setLoading(false);
+        console.groupEnd();
       },
       (error) => {
         console.error("Error loading admin devices:", error);
-        setDevices(readLocalDevices());
+        setDevices([]);
+        setFirestoreDeviceCount(0);
+        setLiveSyncHealthy(false);
         setLoading(false);
       }
     );
@@ -329,7 +365,7 @@ export const AdminPanel = () => {
       unsubscribeUsers();
       unsubscribeDevices();
     };
-  }, []);
+  }, [navigate, user]);
 
   const selectedUser = users.find((entry) => entry.id === selectedUserId) ?? null;
   const selectedUserDetails = useMemo(() => {
@@ -434,12 +470,17 @@ export const AdminPanel = () => {
         .filter((entry) => entry.role === "user")
         .map((entry) => ({
           ...entry,
-          deviceCount:
-            entry.deviceCount ??
-            devices.filter((device) => device.ownerUid === entry.id).length,
+          deviceCount: devices.filter((device) => device.ownerUid === entry.id).length,
         })),
     [devices, users]
   );
+
+  const totalUniqueUsers = usersWithDeviceCount.length;
+  const connectedDeviceCount = useMemo(
+    () => devices.filter((device) => device.status === "active").length,
+    [devices],
+  );
+  const mismatchDetected = firestoreDeviceCount !== devices.length;
 
   const filteredReadingsByDevice = useMemo(() => {
     const query = readingSearch.trim().toLowerCase();
@@ -619,10 +660,6 @@ export const AdminPanel = () => {
           merge: true,
         }),
       ]);
-
-      const updated = { id: selectedDevice.id, ...payload };
-      upsertLocalDevice(updated);
-      setDevices((prev) => prev.map((entry) => (entry.id === updated.id ? updated : entry)));
       setIsDeviceEditOpen(false);
     } catch (error) {
       console.error("Failed to save device changes:", error);
@@ -649,7 +686,6 @@ export const AdminPanel = () => {
       ]);
 
       removeLocalDevice(device.id);
-      setDevices((prev) => prev.filter((entry) => entry.id !== device.id));
       if (selectedDeviceId === device.id) {
         setSelectedDeviceId(null);
       }
@@ -747,13 +783,13 @@ export const AdminPanel = () => {
         >
           <div className="premium-card p-5">
             <p className="text-xs uppercase tracking-[0.24em] text-slate-600 mb-3">Users</p>
-            <h3 className="text-3xl font-black text-slate-950 dark:text-white">{users.length}</h3>
+            <h3 className="text-3xl font-black text-slate-950 dark:text-white">{totalUniqueUsers}</h3>
             <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Total accounts monitored</p>
           </div>
           <div className="premium-card p-5">
             <p className="text-xs uppercase tracking-[0.24em] text-slate-600 mb-3">Connected Devices</p>
-            <h3 className="text-3xl font-black text-slate-950 dark:text-white">{devices.length}</h3>
-            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Active devices across all users</p>
+            <h3 className="text-3xl font-black text-slate-950 dark:text-white">{connectedDeviceCount}</h3>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Active devices from Firestore</p>
           </div>
           <div className="premium-card p-5">
             <p className="text-xs uppercase tracking-[0.24em] text-slate-600 mb-3">Selected User</p>
@@ -762,10 +798,25 @@ export const AdminPanel = () => {
           </div>
           <div className="premium-card p-5">
             <p className="text-xs uppercase tracking-[0.24em] text-slate-600 mb-3">Device View</p>
-            <h3 className="text-3xl font-black text-slate-950 dark:text-white">{selectedUserDevices.length}</h3>
-            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Devices owned by selected user</p>
+            <h3 className="text-3xl font-black text-slate-950 dark:text-white">{firestoreDeviceCount}</h3>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Total devices in Firestore</p>
           </div>
         </motion.div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${
+            liveSyncHealthy
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
+              : "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-300"
+          }`}>
+            {liveSyncHealthy ? "Live Synced with Firestore" : "Sync issue detected"}
+          </span>
+          {mismatchDetected ? (
+            <span className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-700 dark:text-amber-300">
+              UI/Firestore mismatch detected (UI {devices.length} vs Firestore {firestoreDeviceCount})
+            </span>
+          ) : null}
+        </div>
 
         <div className="grid lg:grid-cols-[340px_1fr] gap-6">
           <motion.section

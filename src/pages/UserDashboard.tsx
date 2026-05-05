@@ -10,7 +10,24 @@ import { WaterGraph } from "@/components/WaterGraph";
 import { ChatPanel } from "@/components/ChatPanel";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AlertPanel } from "@/components/AlertPanel";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SyncMonitor } from "@/components/SyncMonitor";
 import { useWaterAlerts } from "@/hooks/useWaterAlerts";
+import { useGeoSimulation } from "@/hooks/useGeoSimulation";
+import { useDevices } from "@/hooks/useDevices";
+import { DeviceLocationPicker } from "@/components/geo/DeviceLocationPicker";
+import { GeoIntelligenceMap } from "@/components/geo/GeoIntelligenceMap";
+import { ZoneIntelligencePanel } from "@/components/geo/ZoneIntelligencePanel";
+import { GeoAlertFeed } from "@/components/geo/GeoAlertFeed";
+import AddDeviceModal from "../components/AddDeviceModal";
+
+import {
+  buildZoneInsights,
+  getRadiusInsights,
+  getSafetyScore,
+  getUnsafeSpreadPrediction,
+  makeGeoDevicePoints,
+} from "@/lib/geoIntelligence";
 import {
   LogOut,
   Plus,
@@ -36,6 +53,10 @@ import {
   BatteryCharging,
   X,
   Trash2,
+  Flame,
+  Globe,
+  LocateFixed,
+  Siren,
 } from "lucide-react";
 
 import {
@@ -60,6 +81,9 @@ import {
   getLocalDeviceHistory,
   getLocalDevicesByOwner,
   removeLocalDevice,
+  flushPendingDeviceOperations,
+  queuePendingDeviceDelete,
+  queuePendingDeviceUpsert,
   upsertLocalDevice,
 } from "@/lib/deviceStore";
 import { getZone } from "@/lib/utils";
@@ -101,8 +125,7 @@ const buildDeviceDocumentId = (
   email: string | null,
   deviceName: string,
 ) => {
-  const username =
-    toFirestoreIdPart(email?.split("@")[0] ?? uid) || "user";
+  const username = toFirestoreIdPart(email?.split("@")[0] ?? uid) || "user";
   const device = toFirestoreIdPart(deviceName) || "device";
 
   return `${username}-${device}`;
@@ -120,13 +143,34 @@ const mergeDeviceLists = (...deviceGroups: DeviceRecord[][]) => {
   return Array.from(merged.values());
 };
 
+type DashboardTab =
+  | "Overview"
+  | "Charts"
+  | "Water Distribution"
+  | "Hardware"
+  | "AI"
+  | "Cloud"
+  | "Reports"
+  | "Profile"
+  | "Settings"
+  | "Help";
+
+type DeviceLocationState = {
+  lat: number;
+  lng: number;
+  label: string;
+  address: string;
+  zone: string;
+};
+
 export const UserDashboard = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const { devices: userDevices, addDevice, removeDevice } = useDevices();
 
   const [loading, setLoading] = useState(true);
   const [devicesLoading, setDevicesLoading] = useState(true);
-  const [simulatorOnly, setSimulatorOnly] = useState(true);
+  const [simulatorOnly, setSimulatorOnly] = useState(false);
   const [devices, setDevices] = useState<DeviceRecord[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [history, setHistory] = useState<
@@ -134,9 +178,13 @@ export const UserDashboard = () => {
   >([]);
   const [areaStatus, setAreaStatus] = useState("Loading...");
   const [showAddForm, setShowAddForm] = useState(false);
+  const [activeTab, setActiveTab] = useState<DashboardTab>("Overview");
+  const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
   const [showDataPanel, setShowDataPanel] = useState(false);
   const [rightRailOpen, setRightRailOpen] = useState(false);
   const [addDeviceLoading, setAddDeviceLoading] = useState(false);
+
+  //   const [devices, setDevices] = useState([]);
   const [newDevice, setNewDevice] = useState<{
     name: string;
     type: "simulator" | "real";
@@ -151,6 +199,13 @@ export const UserDashboard = () => {
     longitude: 85.14,
   });
   const [newDeviceConnected, setNewDeviceConnected] = useState(false);
+  const [newDeviceMapLocation, setNewDeviceMapLocation] = useState({
+    lat: 25.61,
+    lng: 85.14,
+    label: "",
+    address: "",
+    zone: "",
+  });
   const [syncingDevices, setSyncingDevices] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [deviceLoadError, setDeviceLoadError] = useState<string | null>(null);
@@ -173,7 +228,7 @@ export const UserDashboard = () => {
   const waterAlerts = useWaterAlerts(
     selectedDeviceId ?? "",
     user?.uid ?? "",
-    user?.email ?? undefined
+    user?.email ?? undefined,
   );
 
   useEffect(() => {
@@ -188,6 +243,7 @@ export const UserDashboard = () => {
     setLoading(false);
     setDeviceLoadError(null);
     setDevicesLoading(true);
+    void flushPendingDeviceOperations(user.uid);
 
     if (simulatorOnly) {
       setDevicesLoading(false);
@@ -220,7 +276,10 @@ export const UserDashboard = () => {
           setSelectedDeviceId((prev) => prev ?? nextDevices[0]?.id ?? null);
           setDeviceLoadError(null);
         } catch (error) {
-          console.error("[Dashboard] Failed to process device snapshot:", error);
+          console.error(
+            "[Dashboard] Failed to process device snapshot:",
+            error,
+          );
           setDeviceLoadError("Unable to load devices. Please try again.");
           setDevices(localDevices);
         } finally {
@@ -308,6 +367,18 @@ export const UserDashboard = () => {
     void fetchAreaData();
   }, [selectedDevice]);
 
+  useEffect(() => {
+    setNewDevice((prev) => ({
+      ...prev,
+      latitude: newDeviceMapLocation.lat,
+      longitude: newDeviceMapLocation.lng,
+      manualLocation:
+        newDeviceMapLocation.address ||
+        newDeviceMapLocation.label ||
+        prev.manualLocation,
+    }));
+  }, [newDeviceMapLocation]);
+
   const refreshDeviceStatus = async (deviceId: string) => {
     const latest = getLocalDeviceHistory(deviceId).slice(-1)[0];
     if (!latest) {
@@ -316,14 +387,16 @@ export const UserDashboard = () => {
 
     const nextStatus = latest.status === "SAFE" ? "active" : "inactive";
 
+    const updated = devices.find((device) => device.id === deviceId);
+
     setDevices((prev) =>
       prev.map((device) =>
         device.id === deviceId ? { ...device, status: nextStatus } : device,
       ),
     );
 
-    const updated = devices.find((device) => device.id === deviceId);
     if (updated) {
+      queuePendingDeviceUpsert({ ...updated, status: nextStatus });
       upsertLocalDevice({ ...updated, status: nextStatus });
     }
 
@@ -419,9 +492,7 @@ export const UserDashboard = () => {
         }
 
         if (!existingDevice.exists()) {
-          await updateDoc(doc(db, "users", user.uid), {
-            deviceCount: increment(1),
-          });
+          queuePendingDeviceUpsert(created);
         }
       } catch (error) {
         console.error("[Dashboard] Firestore error:", error);
@@ -431,12 +502,20 @@ export const UserDashboard = () => {
       upsertLocalDevice(created);
       setDevices((prev) => [created, ...prev]);
       setSelectedDeviceId(created.id);
+      queuePendingDeviceUpsert(created);
       setNewDevice({
         name: "",
         type: "simulator",
         manualLocation: "",
         latitude: 25.61,
         longitude: 85.14,
+      });
+      setNewDeviceMapLocation({
+        lat: 25.61,
+        lng: 85.14,
+        label: "",
+        address: "",
+        zone: "",
       });
       setNewDeviceConnected(false);
       setShowAddForm(false);
@@ -449,16 +528,89 @@ export const UserDashboard = () => {
     }
   };
 
+  const handleAddDeviceModal = async (device: {
+    name: string;
+    lat: number;
+    lng: number;
+    zone: string;
+    location: string;
+  }): Promise<boolean> => {
+    if (!user || !device.name.trim()) {
+      console.warn("[Dashboard] Invalid device input from modal");
+      return false;
+    }
+
+    if (!device.location.trim()) {
+      alert("Please enter a location or select it from the map.");
+      return false;
+    }
+
+    setSyncError(null);
+    setAddDeviceLoading(true);
+
+    try {
+      const deviceId = buildDeviceDocumentId(user.uid, user.email, device.name);
+      const payload: Omit<DeviceRecord, "id"> = {
+        ownerUid: user.uid,
+        name: device.name.trim(),
+        uniqueId: deviceId,
+        location: device.location.trim(),
+        latitude: device.lat,
+        longitude: device.lng,
+        zone: device.zone || getZone(device.lat, device.lng),
+        status: "active",
+        battery: 85,
+        deviceType: "real",
+        createdAt: new Date().toISOString(),
+      };
+
+      let created: DeviceRecord;
+      try {
+        const deviceRef = doc(db, "users", user.uid, "devices", deviceId);
+        const existingDevice = await getDoc(deviceRef);
+        await setDoc(deviceRef, payload);
+        created = { id: deviceId, ...payload };
+
+        try {
+          await setDoc(doc(db, "devices", deviceId), payload);
+        } catch {
+          // Root devices mirror may be unavailable depending on Firestore rules.
+        }
+
+        if (!existingDevice.exists()) {
+          queuePendingDeviceUpsert(created);
+        }
+      } catch (error) {
+        console.error("[Dashboard] Firestore error from modal:", error);
+        created = { id: deviceId, ...payload };
+      }
+
+      upsertLocalDevice(created);
+      setDevices((prev) => [created, ...prev]);
+      setSelectedDeviceId(created.id);
+      queuePendingDeviceUpsert(created);
+      setActiveTab("Hardware");
+      console.log("[Dashboard] Device created via modal:", created.id);
+      return true;
+    } catch (error) {
+      console.error("[Dashboard] Unexpected error in handleAddDeviceModal:", error);
+      alert("Failed to create device. Check the console for details.");
+      return false;
+    } finally {
+      setAddDeviceLoading(false);
+    }
+  };
+
   const handleDeleteDevice = async (deviceId: string) => {
     if (!window.confirm("Delete this device from your account?")) {
       return;
     }
 
     try {
-      await deleteDoc(doc(db, "users", user!.uid, "devices", deviceId));
-      await updateDoc(doc(db, "users", user!.uid), {
-        deviceCount: increment(-1),
-      });
+      await Promise.all([
+        deleteDoc(doc(db, "users", user!.uid, "devices", deviceId)),
+        deleteDoc(doc(db, "devices", deviceId)),
+      ]);
     } catch {
       // Local fallback still applies.
     }
@@ -469,6 +621,7 @@ export const UserDashboard = () => {
       // Root devices mirror may be unavailable depending on Firestore rules.
     }
 
+    queuePendingDeviceDelete(user!.uid, deviceId);
     removeLocalDevice(deviceId);
     const nextDevices = devices.filter((device) => device.id !== deviceId);
     setDevices(nextDevices);
@@ -537,6 +690,22 @@ export const UserDashboard = () => {
       setSyncingDevices(false);
     }
   };
+
+  useEffect(() => {
+    const handleOnlineStatus = () => {
+      setConnectionStatus(navigator.onLine ? "connected" : "disconnected");
+      void flushPendingDeviceOperations(user?.uid);
+    };
+
+    handleOnlineStatus();
+    window.addEventListener("online", handleOnlineStatus);
+    window.addEventListener("offline", handleOnlineStatus);
+
+    return () => {
+      window.removeEventListener("online", handleOnlineStatus);
+      window.removeEventListener("offline", handleOnlineStatus);
+    };
+  }, [user?.uid]);
 
   useEffect(() => {
     if (import.meta.env.DEV) {
@@ -639,6 +808,88 @@ export const UserDashboard = () => {
     navigate("/login");
   };
 
+  const tabMetadata: Record<DashboardTab, {
+    eyebrow: string;
+    title: string;
+    subtitle: string;
+    accent: string;
+    chip: string;
+  }> = {
+    Overview: {
+      eyebrow: "Insights",
+      title: "Overview",
+      subtitle: "Water quality, device status, and quick actions.",
+      accent: "from-cyan-500 to-slate-500",
+      chip: "bg-cyan-100 text-cyan-700 ring-cyan-200 dark:bg-cyan-900/40 dark:text-cyan-200",
+    },
+    Charts: {
+      eyebrow: "Charts",
+      title: "Charts",
+      subtitle: "Visualize trends for your selected device.",
+      accent: "from-slate-500 to-slate-700",
+      chip: "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-900/40 dark:text-slate-300",
+    },
+    "Water Distribution": {
+      eyebrow: "Water",
+      title: "Water Distribution",
+      subtitle: "Monitor distribution and coverage across zones.",
+      accent: "from-sky-500 to-blue-700",
+      chip: "bg-sky-100 text-sky-700 ring-sky-200 dark:bg-sky-900/40 dark:text-sky-200",
+    },
+    Hardware: {
+      eyebrow: "Hardware",
+      title: "Hardware",
+      subtitle: "Sync devices and register new hardware here.",
+      accent: "from-cyan-500 to-cyan-700",
+      chip: "bg-cyan-100 text-cyan-700 ring-cyan-200 dark:bg-cyan-900/40 dark:text-cyan-200",
+    },
+    AI: {
+      eyebrow: "AI",
+      title: "AI",
+      subtitle: "Intelligence and predictive alerts for your devices.",
+      accent: "from-emerald-500 to-slate-700",
+      chip: "bg-emerald-100 text-emerald-700 ring-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-200",
+    },
+    Cloud: {
+      eyebrow: "Cloud",
+      title: "Cloud",
+      subtitle: "Manage remote sync and storage for your fleet.",
+      accent: "from-blue-500 to-slate-700",
+      chip: "bg-blue-100 text-blue-700 ring-blue-200 dark:bg-blue-900/40 dark:text-blue-200",
+    },
+    Reports: {
+      eyebrow: "Reports",
+      title: "Reports",
+      subtitle: "Export logs and review historic readings.",
+      accent: "from-violet-500 to-slate-700",
+      chip: "bg-violet-100 text-violet-700 ring-violet-200 dark:bg-violet-900/40 dark:text-violet-200",
+    },
+    Profile: {
+      eyebrow: "Profile",
+      title: "Profile",
+      subtitle: "Your account and user settings.",
+      accent: "from-slate-500 to-slate-700",
+      chip: "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-900/40 dark:text-slate-300",
+    },
+    Settings: {
+      eyebrow: "Settings",
+      title: "Settings",
+      subtitle: "Configure dashboard behavior and notifications.",
+      accent: "from-slate-500 to-slate-700",
+      chip: "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-900/40 dark:text-slate-300",
+    },
+    Help: {
+      eyebrow: "Help",
+      title: "Help",
+      subtitle: "Support and troubleshooting guidance.",
+      accent: "from-slate-500 to-slate-700",
+      chip: "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-900/40 dark:text-slate-300",
+    },
+  };
+
+  const activeTabMeta = tabMetadata[activeTab];
+  const activePageTitle = activeTabMeta.title;
+
   // Monitoring control states
   const [monitorRunning, setMonitorRunning] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(0);
@@ -649,108 +900,10 @@ export const UserDashboard = () => {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const readingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [activeTab, setActiveTab] = useState<string>("Overview");
-  const activePageTitle = useMemo(() => {
-    const labels: Record<string, string> = {
-      Overview: "Dashboard",
-      Charts: "Charts",
-      "Water Distribution": "Water Distribution",
-      Hardware: "Hardware",
-      AI: "Artificial Intelligence",
-      Cloud: "Cloud",
-      Reports: "Reports",
-      Profile: "Profile",
-      Settings: "Settings",
-      Help: "Help",
-    };
-
-    return labels[activeTab] ?? activeTab;
-  }, [activeTab]);
-
-  const activeTabMeta = useMemo(() => {
-    const themes: Record<
-      string,
-      {
-        eyebrow: string;
-        subtitle: string;
-        accent: string;
-        chip: string;
-      }
-    > = {
-      Overview: {
-        eyebrow: "Command center",
-        subtitle:
-          "A focused cockpit for live device health, controls, and water intelligence.",
-        accent: "from-cyan-500/20 via-sky-500/10 to-emerald-500/10",
-        chip: "ring-cyan-400/25 bg-cyan-500/10 text-cyan-200",
-      },
-      Charts: {
-        eyebrow: "Trend studio",
-        subtitle:
-          "Visualize water quality patterns with a calmer, analysis-first layout.",
-        accent: "from-sky-500/20 via-indigo-500/10 to-cyan-500/10",
-        chip: "ring-sky-400/25 bg-sky-500/10 text-sky-200",
-      },
-      "Water Distribution": {
-        eyebrow: "Network flow",
-        subtitle:
-          "Inspect how water moves across zones with a map-like operational frame.",
-        accent: "from-emerald-500/20 via-teal-500/10 to-cyan-500/10",
-        chip: "ring-emerald-400/25 bg-emerald-500/10 text-emerald-200",
-      },
-      Hardware: {
-        eyebrow: "Hardware room",
-        subtitle:
-          "A sensor-health focused view with practical device telemetry and status.",
-        accent: "from-slate-500/20 via-cyan-500/10 to-emerald-500/10",
-        chip: "ring-slate-400/25 bg-slate-500/10 text-slate-200",
-      },
-      AI: {
-        eyebrow: "AI assistant",
-        subtitle:
-          "A conversation-first space tuned for guidance, forecasting, and action.",
-        accent: "from-emerald-500/20 via-lime-500/10 to-cyan-500/10",
-        chip: "ring-emerald-400/25 bg-emerald-500/10 text-emerald-200",
-      },
-      Cloud: {
-        eyebrow: "Cloud vault",
-        subtitle:
-          "Backup and restore flows with a lighter utility-oriented presentation.",
-        accent: "from-cyan-500/20 via-sky-500/10 to-slate-500/10",
-        chip: "ring-cyan-400/25 bg-cyan-500/10 text-cyan-200",
-      },
-      Reports: {
-        eyebrow: "Reporting suite",
-        subtitle:
-          "Exportable summaries and audit-friendly snapshots for quick review.",
-        accent: "from-amber-500/20 via-rose-500/10 to-cyan-500/10",
-        chip: "ring-amber-400/25 bg-amber-500/10 text-amber-200",
-      },
-      Profile: {
-        eyebrow: "Identity panel",
-        subtitle:
-          "Account details and ownership information in a clean, low-noise frame.",
-        accent: "from-indigo-500/20 via-sky-500/10 to-cyan-500/10",
-        chip: "ring-indigo-400/25 bg-indigo-500/10 text-indigo-200",
-      },
-      Settings: {
-        eyebrow: "Control room",
-        subtitle:
-          "Tuning switches and preferences without crowding the rest of the app.",
-        accent: "from-violet-500/20 via-slate-500/10 to-cyan-500/10",
-        chip: "ring-violet-400/25 bg-violet-500/10 text-violet-200",
-      },
-      Help: {
-        eyebrow: "Support desk",
-        subtitle:
-          "Guidance and discovery kept separate from the operational dashboard.",
-        accent: "from-lime-500/20 via-emerald-500/10 to-cyan-500/10",
-        chip: "ring-lime-400/25 bg-lime-500/10 text-lime-200",
-      },
-    };
-
-    return themes[activeTab] ?? themes.Overview;
-  }, [activeTab]);
+  const [geoHeatmapEnabled, setGeoHeatmapEnabled] = useState(true);
+  const [geoSimulationEnabled, setGeoSimulationEnabled] = useState(true);
+  const [geoSoundEnabled, setGeoSoundEnabled] = useState(false);
+  const [geoSelectedId, setGeoSelectedId] = useState<string | null>(null);
 
   const downloadCSV = () => {
     if (!selectedDevice) return;
@@ -854,21 +1007,159 @@ export const UserDashboard = () => {
   };
 
   const latest = history.length ? history[history.length - 1] : null;
-  const latestReadings = history.slice(-10);
-  const tdsData = history.map((item, index) => ({
-    time: index + 1,
-    tds: item.tds,
-  }));
-  const phTurbidityData = history.map((item, index) => ({
-    time: index + 1,
-    ph: item.ph,
-    turbidity: item.turbidity,
-  }));
+  const latestReadings = useMemo(() => history.slice(-10), [history]);
+  const tdsData = useMemo(
+    () =>
+      history.map((item, index) => ({
+        time: index + 1,
+        tds: item.tds,
+      })),
+    [history],
+  );
+  const phTurbidityData = useMemo(
+    () =>
+      history.map((item, index) => ({
+        time: index + 1,
+        ph: item.ph,
+        turbidity: item.turbidity,
+      })),
+    [history],
+  );
+  const dashboardInsights = useMemo(() => {
+    const count = latestReadings.length;
+    if (!count) {
+      return {
+        safetyScore: 0,
+        riskLevel: "No data",
+        recommendation: "Start monitoring to generate reliability insights.",
+        trendDelta: "No trend yet",
+      };
+    }
+
+    const safeReadings = latestReadings.filter(
+      (reading) => reading.status === "SAFE",
+    ).length;
+    const safetyScore = Math.round((safeReadings / count) * 100);
+    const recentTds = latestReadings.slice(-5).map((reading) => reading.tds);
+    const tdsDrift =
+      recentTds.length > 1 ? recentTds[recentTds.length - 1] - recentTds[0] : 0;
+    const riskLevel =
+      safetyScore >= 85
+        ? "Low risk"
+        : safetyScore >= 60
+          ? "Moderate risk"
+          : "High risk";
+
+    const recommendation =
+      latest && latest.status !== "SAFE"
+        ? "Immediate filtration and source check recommended."
+        : tdsDrift > 100
+          ? "TDS is trending up. Schedule preventive maintenance."
+          : "Water quality is stable. Keep periodic monitoring cadence.";
+
+    const trendDelta =
+      tdsDrift === 0
+        ? "Stable trend"
+        : `${tdsDrift > 0 ? "+" : ""}${Math.round(tdsDrift)} ppm in last 5 readings`;
+
+    return { safetyScore, riskLevel, recommendation, trendDelta };
+  }, [latest, latestReadings]);
+  const latestReadingByDevice = useMemo(
+    () =>
+      devices.reduce<
+        Record<
+          string,
+          ReturnType<typeof getLocalDeviceHistory>[number] | undefined
+        >
+      >((acc, device) => {
+        const historyForDevice = getLocalDeviceHistory(device.id);
+        acc[device.id] = historyForDevice[historyForDevice.length - 1];
+        return acc;
+      }, {}),
+    [devices, history.length],
+  );
+  const realGeoPoints = useMemo(
+    () => makeGeoDevicePoints(devices, latestReadingByDevice),
+    [devices, latestReadingByDevice],
+  );
+  const selectedRealPoint = useMemo(
+    () => realGeoPoints.find((point) => point.id === selectedDeviceId) ?? null,
+    [realGeoPoints, selectedDeviceId],
+  );
+  const { simulatedDevices, alertFeed } = useGeoSimulation(
+    {
+      lat: selectedRealPoint?.lat ?? 25.61,
+      lng: selectedRealPoint?.lng ?? 85.14,
+    },
+    geoSimulationEnabled,
+    70,
+  );
+  const allGeoPoints = useMemo(
+    () => [...realGeoPoints, ...simulatedDevices],
+    [realGeoPoints, simulatedDevices],
+  );
+  const selectedGeoPoint = useMemo(
+    () =>
+      allGeoPoints.find(
+        (point) => point.id === (geoSelectedId ?? selectedDeviceId),
+      ) ?? null,
+    [allGeoPoints, geoSelectedId, selectedDeviceId],
+  );
+  const radiusInsights = useMemo(() => {
+    if (!selectedGeoPoint) return [];
+    return getRadiusInsights(
+      { lat: selectedGeoPoint.lat, lng: selectedGeoPoint.lng },
+      allGeoPoints,
+      [2, 5],
+    );
+  }, [allGeoPoints, selectedGeoPoint]);
+  const zoneInsights = useMemo(
+    () => buildZoneInsights(allGeoPoints),
+    [allGeoPoints],
+  );
+  const spreadPrediction = useMemo(
+    () => getUnsafeSpreadPrediction(selectedGeoPoint, allGeoPoints),
+    [allGeoPoints, selectedGeoPoint],
+  );
+  const selectedSafetyScore = useMemo(
+    () =>
+      selectedGeoPoint
+        ? getSafetyScore({
+            ph: selectedGeoPoint.ph,
+            tds: selectedGeoPoint.tds,
+            turbidity: selectedGeoPoint.turbidity,
+            temperature: selectedGeoPoint.temperature,
+          })
+        : 0,
+    [selectedGeoPoint],
+  );
+
+  useEffect(() => {
+    const shouldPlay =
+      geoSoundEnabled && alertFeed.some((item) => item.status === "unsafe");
+    if (!shouldPlay) return;
+    try {
+      const audio = new Audio("/sound.mp3");
+      audio.volume = 0.25;
+      void audio.play();
+    } catch {
+      // best effort
+    }
+  }, [alertFeed, geoSoundEnabled]);
 
   if (loading) {
     return (
       <div className="min-h-screen bg-transparent flex items-center justify-center">
-        <div className="text-white text-xl">Loading...</div>
+        <div className="w-full max-w-4xl space-y-4 px-4">
+          <Skeleton className="h-10 w-64 rounded-xl" />
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Skeleton className="h-28 rounded-2xl" />
+            <Skeleton className="h-28 rounded-2xl" />
+            <Skeleton className="h-28 rounded-2xl" />
+            <Skeleton className="h-28 rounded-2xl" />
+          </div>
+          <Skeleton className="h-72 rounded-3xl" />
+        </div>
       </div>
     );
   }
@@ -877,28 +1168,47 @@ export const UserDashboard = () => {
 
   return (
     <main className="min-h-screen bg-transparent text-slate-950 dark:text-white">
+      <SyncMonitor userId={user?.uid} />
       {syncingDevices && (
         <div className="fixed inset-0 bg-slate-950/50 z-50 flex items-center justify-center backdrop-blur-sm">
           <div className="text-center rounded-3xl border border-slate-200/80 bg-white/95 px-6 py-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900/90">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-500 mx-auto mb-4"></div>
-            <div className="text-slate-950 dark:text-white text-xl font-semibold">Syncing Devices...</div>
-            <div className="text-slate-600 dark:text-slate-400 mt-2">Please wait while we update your device registry.</div>
+            <div className="text-slate-950 dark:text-white text-xl font-semibold">
+              Syncing Devices...
+            </div>
+            <div className="text-slate-600 dark:text-slate-400 mt-2">
+              Please wait while we update your device registry.
+            </div>
           </div>
         </div>
       )}
       {syncError && (
         <div className="fixed top-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg z-50">
           {syncError}
-          <button onClick={() => setSyncError(null)} className="ml-2 text-white hover:text-red-200">├ù</button>
+          <button
+            onClick={() => setSyncError(null)}
+            className="ml-2 text-white hover:text-red-200"
+          >
+            ├ù
+          </button>
         </div>
       )}
+      
+      <AddDeviceModal
+        isOpen={showAddDeviceModal}
+        onClose={() => setShowAddDeviceModal(false)}
+        onAddDevice={handleAddDeviceModal}
+      />
+      
       <div className="bg-white/90 dark:bg-slate-900/85 border-b border-slate-200/80 dark:border-slate-700 sticky top-0 z-50 shadow-sm backdrop-blur-xl">
         <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="text-3xl font-black text-slate-950 dark:text-white">
               User Device Dashboard
             </h1>
-            <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">{user?.email}</p>
+            <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
+              {user?.email}
+            </p>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-3">
             <ThemeToggle />
@@ -919,8 +1229,12 @@ export const UserDashboard = () => {
             <div className="flex items-center gap-3">
               <div className="h-10 w-10 animate-spin rounded-full border-b-2 border-cyan-500" />
               <div>
-                <p className="font-semibold text-slate-950 dark:text-white">Loading devices...</p>
-                <p className="text-sm text-slate-600 dark:text-slate-400">Fetching your registry and latest data.</p>
+                <p className="font-semibold text-slate-950 dark:text-white">
+                  Loading devices...
+                </p>
+                <p className="text-sm text-slate-600 dark:text-slate-400">
+                  Fetching your registry and latest data.
+                </p>
               </div>
             </div>
           </div>
@@ -930,7 +1244,9 @@ export const UserDashboard = () => {
           <div className="rounded-3xl border border-red-200 bg-red-50/90 p-4 text-red-800 shadow-sm dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-200">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="font-semibold">Unable to load devices. Please try again.</p>
+                <p className="font-semibold">
+                  Unable to load devices. Please try again.
+                </p>
                 <p className="mt-1 text-sm opacity-90">{deviceLoadError}</p>
               </div>
               <Button
@@ -953,24 +1269,80 @@ export const UserDashboard = () => {
           >
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div className="premium-card p-5">
-                <p className="text-sm text-slate-600 uppercase tracking-[0.22em] mb-3">Devices</p>
-                <h3 className="text-3xl font-black text-slate-950 dark:text-white">{devices.length}</h3>
-                <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Connected simulators and real devices</p>
+                <p className="text-sm text-slate-600 uppercase tracking-[0.22em] mb-3">
+                  Devices
+                </p>
+                <h3 className="text-3xl font-black text-slate-950 dark:text-white">
+                  {devices.length}
+                </h3>
+                <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+                  Connected simulators and real devices
+                </p>
               </div>
               <div className="premium-card p-5">
-                <p className="text-sm text-slate-600 uppercase tracking-[0.22em] mb-3">Alerts</p>
-                <h3 className="text-3xl font-black text-slate-950 dark:text-white">{waterAlerts.recentAlerts.length}</h3>
-                <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Current warnings and stability status</p>
+                <p className="text-sm text-slate-600 uppercase tracking-[0.22em] mb-3">
+                  Alerts
+                </p>
+                <h3 className="text-3xl font-black text-slate-950 dark:text-white">
+                  {waterAlerts.recentAlerts.length}
+                </h3>
+                <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+                  Current warnings and stability status
+                </p>
               </div>
               <div className="premium-card p-5">
-                <p className="text-sm text-slate-600 uppercase tracking-[0.22em] mb-3">Selected Zone</p>
-                <h3 className="text-3xl font-black text-slate-950 dark:text-white">{selectedDevice?.zone ?? "Not selected"}</h3>
-                <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Water monitoring region analysis</p>
+                <p className="text-sm text-slate-600 uppercase tracking-[0.22em] mb-3">
+                  Selected Zone
+                </p>
+                <h3 className="text-3xl font-black text-slate-950 dark:text-white">
+                  {selectedDevice?.zone ?? "Not selected"}
+                </h3>
+                <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+                  Water monitoring region analysis
+                </p>
               </div>
               <div className="premium-card p-5">
-                <p className="text-sm text-slate-600 uppercase tracking-[0.22em] mb-3">Mode</p>
-                <h3 className="text-3xl font-black text-slate-950 dark:text-white">{simulatorOnly ? "Simulator" : "Hybrid"}</h3>
-                <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Real-time status and sync controls</p>
+                <p className="text-sm text-slate-600 uppercase tracking-[0.22em] mb-3">
+                  Mode
+                </p>
+                <h3 className="text-3xl font-black text-slate-950 dark:text-white">
+                  {simulatorOnly ? "Simulator" : "Hybrid"}
+                </h3>
+                <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+                  Real-time status and sync controls
+                </p>
+              </div>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-3">
+              <div className="premium-card p-5">
+                <p className="text-sm text-slate-600 uppercase tracking-[0.22em] mb-2">
+                  Safety Score
+                </p>
+                <h3 className="text-3xl font-black text-slate-950 dark:text-white">
+                  {dashboardInsights.safetyScore}%
+                </h3>
+                <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+                  Based on last {latestReadings.length || 0} live readings.
+                </p>
+              </div>
+              <div className="premium-card p-5">
+                <p className="text-sm text-slate-600 uppercase tracking-[0.22em] mb-2">
+                  Predictive Risk
+                </p>
+                <h3 className="text-3xl font-black text-slate-950 dark:text-white">
+                  {dashboardInsights.riskLevel}
+                </h3>
+                <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+                  {dashboardInsights.trendDelta}
+                </p>
+              </div>
+              <div className="premium-card p-5">
+                <p className="text-sm text-slate-600 uppercase tracking-[0.22em] mb-2">
+                  AI Recommendation
+                </p>
+                <p className="text-base font-semibold text-slate-950 dark:text-white">
+                  {dashboardInsights.recommendation}
+                </p>
               </div>
             </div>
 
@@ -998,7 +1370,9 @@ export const UserDashboard = () => {
           transition={{ duration: 0.3 }}
           className="relative overflow-hidden rounded-[2rem] border border-slate-200/80 bg-white/88 p-5 shadow-xl backdrop-blur-xl dark:border-slate-700 dark:bg-slate-900/80"
         >
-          <div className={`absolute inset-0 bg-gradient-to-br ${activeTabMeta.accent} opacity-90`} />
+          <div
+            className={`absolute inset-0 bg-gradient-to-br ${activeTabMeta.accent} opacity-90`}
+          />
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.32),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(34,211,238,0.12),transparent_32%)]" />
           <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-3xl">
@@ -1009,7 +1383,9 @@ export const UserDashboard = () => {
                 <h2 className="text-3xl font-black tracking-[-0.03em] text-slate-950 dark:text-white sm:text-4xl">
                   {activePageTitle}
                 </h2>
-                <span className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] ring-1 ${activeTabMeta.chip}`}>
+                <span
+                  className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] ring-1 ${activeTabMeta.chip}`}
+                >
                   {activeTab}
                 </span>
               </div>
@@ -1023,7 +1399,9 @@ export const UserDashboard = () => {
                   </span>
                   <select
                     value={selectedDeviceId ?? devices[0]?.id ?? ""}
-                    onChange={(event) => setSelectedDeviceId(event.target.value)}
+                    onChange={(event) =>
+                      setSelectedDeviceId(event.target.value)
+                    }
                     className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-slate-950 outline-none dark:text-white"
                     aria-label="Select active device"
                   >
@@ -1052,27 +1430,46 @@ export const UserDashboard = () => {
                     type="button"
                     onClick={() => {
                       setActiveTab("Hardware");
-                      setShowAddForm(true);
+                      setShowAddDeviceModal(true);
                     }}
                     className="rounded-2xl bg-cyan-500 px-4 py-3 text-white shadow-lg shadow-cyan-500/25 hover:bg-cyan-600"
                   >
                     <Plus className="mr-2 h-4 w-4" />
                     Add Device
                   </Button>
-                </div>
+                  {/* <button
+                    onClick={() => setShowAddDevice(true)}
+                    className="rounded-2xl bg-cyan-500 px-4 py-3 text-white shadow-lg shadow-cyan-500/25 hover:bg-cyan-600"
+                  >
+                    + Add Device
+                  </button>
+                   */}
+                </div>         
 
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="rounded-2xl border border-white/40 bg-white/70 px-4 py-3 text-slate-900 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5 dark:text-white">
-                    <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Live mode</p>
-                    <p className="mt-1 text-sm font-semibold">{simulatorOnly ? "Simulator-first" : "Hybrid live sync"}</p>
+                    <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                      Live mode
+                    </p>
+                    <p className="mt-1 text-sm font-semibold">
+                      {simulatorOnly ? "Simulator-first" : "Hybrid live sync"}
+                    </p>
                   </div>
                   <div className="rounded-2xl border border-white/40 bg-white/70 px-4 py-3 text-slate-900 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5 dark:text-white">
-                    <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Selected device</p>
-                    <p className="mt-1 text-sm font-semibold">{selectedDevice?.name ?? "None selected"}</p>
+                    <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                      Selected device
+                    </p>
+                    <p className="mt-1 text-sm font-semibold">
+                      {selectedDevice?.name ?? "None selected"}
+                    </p>
                   </div>
                   <div className="rounded-2xl border border-white/40 bg-white/70 px-4 py-3 text-slate-900 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5 dark:text-white">
-                    <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Zone</p>
-                    <p className="mt-1 text-sm font-semibold">{selectedDevice?.zone ?? "Unknown"}</p>
+                    <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                      Zone
+                    </p>
+                    <p className="mt-1 text-sm font-semibold">
+                      {selectedDevice?.zone ?? "Unknown"}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -1116,7 +1513,7 @@ export const UserDashboard = () => {
               return (
                 <button
                   key={label}
-                  onClick={() => setActiveTab(tab)}
+                  onClick={() => setActiveTab(tab as any)}
                   className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-all duration-200 ${active ? "sidebar-item-active" : "text-slate-700 hover:bg-slate-200 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-700/70 dark:hover:text-white"}`}
                 >
                   <Icon className="h-4 w-4" />
@@ -1204,20 +1601,21 @@ export const UserDashboard = () => {
                     {user?.email?.charAt(0)?.toUpperCase() ?? "U"}
                   </div>
                   <div className="max-w-full text-center">
-                    <p className="break-words font-semibold">
-                      {user?.email}
-                    </p>
+                    <p className="break-words font-semibold">{user?.email}</p>
                     <p className="mt-1 break-all text-xs text-slate-600 dark:text-slate-400">
                       User ID: {user?.uid}
                     </p>
                   </div>
-                  <Button onClick={handleLogout} className="w-full bg-blue-600 hover:bg-blue-700 text-white">
+                  <Button
+                    onClick={handleLogout}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                  >
                     Logout
                   </Button>
                 </div>
 
                 <div className="mt-4 space-y-4">
-                    <section className="alert-panel-light alert-info">
+                  <section className="alert-panel-light alert-info">
                     <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200">
                       <AlertTriangle className="h-4 w-4 text-amber-500" />
                       <h4 className="text-sm font-semibold">Alerts</h4>
@@ -1251,10 +1649,7 @@ export const UserDashboard = () => {
                     </ul>
                   </section>
 
-                  <section className="surface-card p-4">
-
-                
-                  </section>
+                  <section className="surface-card p-4"></section>
                 </div>
               </motion.aside>
             </>
@@ -1361,25 +1756,41 @@ export const UserDashboard = () => {
                               {selectedDevice.name}
                             </h3>
                             <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
-                              Device ID: {selectedDevice.uniqueId} | Installed at: {selectedDevice.location}
+                              Device ID: {selectedDevice.uniqueId} | Installed
+                              at: {selectedDevice.location}
                             </p>
                             <p className="mt-1 text-xs text-slate-500 dark:text-slate-500">
-                              Owner: {selectedDevice.ownerUid === user?.uid ? user?.email ?? selectedDevice.ownerUid : selectedDevice.ownerUid}
+                              Owner:{" "}
+                              {selectedDevice.ownerUid === user?.uid
+                                ? (user?.email ?? selectedDevice.ownerUid)
+                                : selectedDevice.ownerUid}
                             </p>
                           </div>
 
                           <div className="grid gap-3 sm:grid-cols-3">
                             <div className="rounded-2xl border border-slate-200/80 bg-slate-50/90 px-4 py-3 dark:border-white/10 dark:bg-white/5">
-                              <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Battery</p>
-                              <p className="mt-1 text-xl font-bold text-slate-950 dark:text-white">{selectedDevice.battery ?? 0}%</p>
+                              <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                                Battery
+                              </p>
+                              <p className="mt-1 text-xl font-bold text-slate-950 dark:text-white">
+                                {selectedDevice.battery ?? 0}%
+                              </p>
                             </div>
                             <div className="rounded-2xl border border-slate-200/80 bg-slate-50/90 px-4 py-3 dark:border-white/10 dark:bg-white/5">
-                              <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Zone</p>
-                              <p className="mt-1 text-xl font-bold text-slate-950 dark:text-white">{selectedDevice.zone ?? "Unknown"}</p>
+                              <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                                Zone
+                              </p>
+                              <p className="mt-1 text-xl font-bold text-slate-950 dark:text-white">
+                                {selectedDevice.zone ?? "Unknown"}
+                              </p>
                             </div>
                             <div className="rounded-2xl border border-slate-200/80 bg-slate-50/90 px-4 py-3 dark:border-white/10 dark:bg-white/5">
-                              <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Mode</p>
-                              <p className="mt-1 text-xl font-bold text-slate-950 dark:text-white">{simulatorOnly ? "Simulator" : "Hybrid"}</p>
+                              <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                                Mode
+                              </p>
+                              <p className="mt-1 text-xl font-bold text-slate-950 dark:text-white">
+                                {simulatorOnly ? "Simulator" : "Hybrid"}
+                              </p>
                             </div>
                           </div>
                         </div>
@@ -1449,13 +1860,23 @@ export const UserDashboard = () => {
                               </thead>
                               <tbody className="divide-y divide-slate-200 text-slate-700 dark:divide-slate-700 dark:text-gray-200">
                                 {latestReadings.map((reading, index) => (
-                                  <tr key={`${selectedDevice.id}-${reading.timestamp}-${index}`}>
+                                  <tr
+                                    key={`${selectedDevice.id}-${reading.timestamp}-${index}`}
+                                  >
                                     <td className="px-4 py-3">{index + 1}</td>
-                                    <td className="px-4 py-3">{new Date(reading.timestamp).toLocaleString()}</td>
+                                    <td className="px-4 py-3">
+                                      {new Date(
+                                        reading.timestamp,
+                                      ).toLocaleString()}
+                                    </td>
                                     <td className="px-4 py-3">{reading.ph}</td>
                                     <td className="px-4 py-3">{reading.tds}</td>
-                                    <td className="px-4 py-3">{reading.turbidity}</td>
-                                    <td className="px-4 py-3">{reading.temperature}</td>
+                                    <td className="px-4 py-3">
+                                      {reading.turbidity}
+                                    </td>
+                                    <td className="px-4 py-3">
+                                      {reading.temperature}
+                                    </td>
                                     <td className="px-4 py-3">
                                       <span
                                         className={`rounded-full px-2 py-1 text-xs ${
@@ -1483,7 +1904,9 @@ export const UserDashboard = () => {
                         unit=""
                         icon="ph"
                         safeRange="6.5 - 8.5"
-                        alert={(latest?.ph ?? 7) < 6.5 || (latest?.ph ?? 7) > 8.5}
+                        alert={
+                          (latest?.ph ?? 7) < 6.5 || (latest?.ph ?? 7) > 8.5
+                        }
                         sparkline={history.map((h) => h.ph)}
                       />
                       <SensorCard
@@ -1527,7 +1950,9 @@ export const UserDashboard = () => {
                   transition={{ duration: 0.22 }}
                 >
                   <div>
-                    <h3 className="text-2xl font-black text-slate-950 dark:text-white">Charts</h3>
+                    <h3 className="text-2xl font-black text-slate-950 dark:text-white">
+                      Charts
+                    </h3>
                     <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
                       Trend-only workspace for water analytics.
                     </p>
@@ -1539,6 +1964,135 @@ export const UserDashboard = () => {
                     <div className="rounded-2xl border border-slate-200/80 bg-slate-50/90 p-4 dark:border-slate-700 dark:bg-slate-900/40">
                       <WaterGraph data={phTurbidityData} type="ph" />
                     </div>
+                  </div>
+                </motion.section>
+              )}
+
+              {activeTab === "Water Distribution" && (
+                <motion.section
+                  key="geo-page"
+                  className="space-y-5 rounded-[1.75rem] border border-slate-200/80 bg-white/92 p-5 shadow-xl shadow-slate-950/5 dark:border-slate-700 dark:bg-slate-900/80"
+                  initial={{ opacity: 0, y: 14 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -14 }}
+                  transition={{ duration: 0.22 }}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-2xl font-black text-slate-950 dark:text-white">
+                        Geo Intelligence Center
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+                        Satellite-first view with clustering, heatmap, zone
+                        intelligence and unsafe spread prediction.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        onClick={() => setGeoHeatmapEnabled((prev) => !prev)}
+                        className={`${geoHeatmapEnabled ? "bg-rose-500 hover:bg-rose-600" : "bg-slate-700 hover:bg-slate-600"} text-white`}
+                      >
+                        <Flame className="mr-2 h-4 w-4" />
+                        Heatmap {geoHeatmapEnabled ? "On" : "Off"}
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={() => setGeoSimulationEnabled((prev) => !prev)}
+                        className={`${geoSimulationEnabled ? "bg-cyan-500 hover:bg-cyan-600" : "bg-slate-700 hover:bg-slate-600"} text-white`}
+                      >
+                        <Globe className="mr-2 h-4 w-4" />
+                        Sim 70 Devices
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={() => setGeoSoundEnabled((prev) => !prev)}
+                        className={`${geoSoundEnabled ? "bg-red-500 hover:bg-red-600" : "bg-slate-700 hover:bg-slate-600"} text-white`}
+                      >
+                        <Siren className="mr-2 h-4 w-4" />
+                        Alert Sound {geoSoundEnabled ? "On" : "Off"}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 xl:grid-cols-[1.55fr_0.85fr]">
+                    <div className="h-[30rem] overflow-hidden rounded-[1.5rem] border border-slate-200/80 dark:border-slate-700">
+                      <GeoIntelligenceMap
+                        points={allGeoPoints}
+                        selectedId={geoSelectedId ?? selectedDeviceId}
+                        onSelect={(id) => {
+                          setGeoSelectedId(id);
+                          if (!id.startsWith("sim-")) {
+                            setSelectedDeviceId(id);
+                          }
+                        }}
+                        center={{
+                          lat: selectedGeoPoint?.lat ?? 25.61,
+                          lng: selectedGeoPoint?.lng ?? 85.14,
+                        }}
+                        heatmapEnabled={geoHeatmapEnabled}
+                        prediction={spreadPrediction}
+                      />
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="rounded-2xl border border-slate-200/80 bg-white/90 p-4 dark:border-slate-700 dark:bg-slate-900/70">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                          Selected device score
+                        </p>
+                        <p className="mt-1 text-3xl font-black text-slate-950 dark:text-white">
+                          {selectedSafetyScore}
+                          <span className="ml-1 text-sm font-medium text-slate-500">
+                            /100
+                          </span>
+                        </p>
+                        <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+                          {selectedGeoPoint?.name ?? "Select a device marker"} -{" "}
+                          {selectedGeoPoint?.status ?? "unknown"}
+                        </p>
+                      </div>
+                      <div className="rounded-2xl border border-slate-200/80 bg-white/90 p-4 dark:border-slate-700 dark:bg-slate-900/70">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                          Radius intelligence
+                        </p>
+                        <div className="mt-3 space-y-2">
+                          {radiusInsights.map((insight) => (
+                            <div
+                              key={insight.radiusKm}
+                              className="rounded-xl bg-slate-100/80 p-3 text-xs text-slate-700 dark:bg-slate-800/70 dark:text-slate-300"
+                            >
+                              <p className="font-semibold">
+                                {insight.radiusKm} km
+                              </p>
+                              <p>
+                                {insight.totalDevices} devices,{" "}
+                                {insight.unsafeDevices} unsafe
+                              </p>
+                              <p>
+                                Avg score {insight.avgSafetyScore}, pH{" "}
+                                {insight.avgPh}, Turbidity{" "}
+                                {insight.avgTurbidity}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {spreadPrediction ? (
+                    <div className="rounded-2xl border border-red-400/40 bg-red-500/10 p-4 text-red-700 dark:text-red-200">
+                      <p className="font-semibold">
+                        Unsafe Spread Prediction - {spreadPrediction.riskScore}%
+                        risk
+                      </p>
+                      <p className="mt-1 text-sm">{spreadPrediction.message}</p>
+                    </div>
+                  ) : null}
+
+                  <div className="grid gap-4 xl:grid-cols-2">
+                    <ZoneIntelligencePanel zones={zoneInsights} />
+                    <GeoAlertFeed alerts={alertFeed} />
                   </div>
                 </motion.section>
               )}
@@ -1566,8 +2120,12 @@ export const UserDashboard = () => {
                     </div>
 
                     <div className="rounded-2xl border border-slate-200/80 bg-white/90 p-4 dark:border-slate-700 dark:bg-slate-900/70">
-                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Selected device</p>
-                      <p className="mt-1 text-lg font-semibold text-slate-950 dark:text-white">{selectedDevice?.name ?? "No device selected"}</p>
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                        Selected device
+                      </p>
+                      <p className="mt-1 text-lg font-semibold text-slate-950 dark:text-white">
+                        {selectedDevice?.name ?? "No device selected"}
+                      </p>
                       <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
                         {latest
                           ? `Latest pH ${latest.ph}, TDS ${latest.tds} ppm, Turbidity ${latest.turbidity} NTU, Temperature ${latest.temperature} ┬░C`
@@ -1577,12 +2135,22 @@ export const UserDashboard = () => {
 
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div className="rounded-2xl border border-slate-200/80 bg-white/90 p-4 dark:border-slate-700 dark:bg-slate-900/70">
-                        <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Reading status</p>
-                        <p className="mt-1 text-sm font-semibold text-slate-950 dark:text-white">{latest?.status ?? "No data"}</p>
+                        <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                          Reading status
+                        </p>
+                        <p className="mt-1 text-sm font-semibold text-slate-950 dark:text-white">
+                          {latest?.status ?? "No data"}
+                        </p>
                       </div>
                       <div className="rounded-2xl border border-slate-200/80 bg-white/90 p-4 dark:border-slate-700 dark:bg-slate-900/70">
-                        <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Last update</p>
-                        <p className="mt-1 text-sm font-semibold text-slate-950 dark:text-white">{latest?.timestamp ? new Date(latest.timestamp).toLocaleString() : "Unknown"}</p>
+                        <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                          Last update
+                        </p>
+                        <p className="mt-1 text-sm font-semibold text-slate-950 dark:text-white">
+                          {latest?.timestamp
+                            ? new Date(latest.timestamp).toLocaleString()
+                            : "Unknown"}
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -1602,7 +2170,9 @@ export const UserDashboard = () => {
                   transition={{ duration: 0.22 }}
                 >
                   <div>
-                    <h3 className="text-2xl font-black text-slate-950 dark:text-white">Cloud</h3>
+                    <h3 className="text-2xl font-black text-slate-950 dark:text-white">
+                      Cloud
+                    </h3>
                     <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
                       Sync and last-reading workflow for the selected device.
                     </p>
@@ -1610,9 +2180,16 @@ export const UserDashboard = () => {
 
                   <div className="grid gap-4 lg:grid-cols-2">
                     <div className="rounded-2xl border border-slate-200/80 bg-slate-50/90 p-4 dark:border-slate-700 dark:bg-slate-900/40">
-                      <p className="text-[11px] uppercase tracking-[0.22em] text-cyan-600 dark:text-cyan-300">Sync</p>
-                      <p className="mt-1 text-lg font-semibold text-slate-950 dark:text-white">Refresh registry</p>
-                      <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Pull the latest device list from Firebase and preserve local data on failure.</p>
+                      <p className="text-[11px] uppercase tracking-[0.22em] text-cyan-600 dark:text-cyan-300">
+                        Sync
+                      </p>
+                      <p className="mt-1 text-lg font-semibold text-slate-950 dark:text-white">
+                        Refresh registry
+                      </p>
+                      <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+                        Pull the latest device list from Firebase and preserve
+                        local data on failure.
+                      </p>
                       <div className="mt-4 flex flex-wrap gap-2">
                         <Button
                           type="button"
@@ -1640,11 +2217,17 @@ export const UserDashboard = () => {
                     </div>
 
                     <div className="rounded-2xl border border-slate-200/80 bg-slate-50/90 p-4 dark:border-slate-700 dark:bg-slate-900/40">
-                      <p className="text-[11px] uppercase tracking-[0.22em] text-emerald-600 dark:text-emerald-300">Last reading</p>
-                      <p className="mt-1 text-lg font-semibold text-slate-950 dark:text-white">{selectedDevice?.name ?? "No device selected"}</p>
+                      <p className="text-[11px] uppercase tracking-[0.22em] text-emerald-600 dark:text-emerald-300">
+                        Last reading
+                      </p>
+                      <p className="mt-1 text-lg font-semibold text-slate-950 dark:text-white">
+                        {selectedDevice?.name ?? "No device selected"}
+                      </p>
                       {latest ? (
                         <div className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-400">
-                          <p>Time: {new Date(latest.timestamp).toLocaleString()}</p>
+                          <p>
+                            Time: {new Date(latest.timestamp).toLocaleString()}
+                          </p>
                           <p>pH: {latest.ph}</p>
                           <p>TDS: {latest.tds} ppm</p>
                           <p>Turbidity: {latest.turbidity} NTU</p>
@@ -1652,10 +2235,15 @@ export const UserDashboard = () => {
                           <p>Status: {latest.status}</p>
                         </div>
                       ) : (
-                        <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">No readings available yet.</p>
+                        <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">
+                          No readings available yet.
+                        </p>
                       )}
                       <div className="mt-4 flex flex-wrap gap-2">
-                        <Button onClick={handleSaveData} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                        <Button
+                          onClick={handleSaveData}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                        >
                           Download backup
                         </Button>
                       </div>
@@ -1674,7 +2262,9 @@ export const UserDashboard = () => {
                   transition={{ duration: 0.22 }}
                 >
                   <div>
-                    <h3 className="text-2xl font-black text-slate-950 dark:text-white">Hardware</h3>
+                    <h3 className="text-2xl font-black text-slate-950 dark:text-white">
+                      Hardware
+                    </h3>
                     <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
                       Connected devices and sensor state.
                     </p>
@@ -1701,7 +2291,10 @@ export const UserDashboard = () => {
                         </Button>
                         <Button
                           type="button"
-                          onClick={() => setShowAddForm((prev) => !prev)}
+                          onClick={() => {
+                            setActiveTab("Hardware");
+                            setShowAddDeviceModal(true);
+                          }}
                           className="bg-gradient-to-r from-cyan-500 to-cyan-600 hover:from-cyan-600 hover:to-cyan-700 text-white shadow-lg hover:shadow-cyan-500/50 transition-all duration-200"
                         >
                           <Plus className="w-4 h-4 mr-1" /> Add Device
@@ -1712,7 +2305,7 @@ export const UserDashboard = () => {
                     {showAddForm && (
                       <form
                         onSubmit={handleAddDevice}
-                        className="grid md:grid-cols-4 gap-3 mt-4 rounded-3xl border border-slate-700/70 bg-slate-900/60 p-5 shadow-xl shadow-slate-950/10"
+                        className="mt-4 grid gap-3 rounded-3xl border border-slate-700/70 bg-slate-900/60 p-5 shadow-xl shadow-slate-950/10 md:grid-cols-4"
                       >
                         <Input
                           placeholder="Device name"
@@ -1733,7 +2326,9 @@ export const UserDashboard = () => {
                               ...prev,
                               type: event.target.value as "simulator" | "real",
                             }));
-                            setNewDeviceConnected(event.target.value === "simulator");
+                            setNewDeviceConnected(
+                              event.target.value === "simulator",
+                            );
                           }}
                           className="rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-white"
                         >
@@ -1752,32 +2347,23 @@ export const UserDashboard = () => {
                           className="bg-slate-700 border-slate-600 text-white"
                           required
                         />
-                        <Input
-                          placeholder="Latitude"
-                          type="number"
-                          step="0.01"
-                          value={newDevice.latitude}
-                          onChange={(event) =>
-                            setNewDevice((prev) => ({
-                              ...prev,
-                              latitude: parseFloat(event.target.value) || 25.61,
-                            }))
-                          }
-                          className="bg-slate-700 border-slate-600 text-white"
-                        />
-                        <Input
-                          placeholder="Longitude"
-                          type="number"
-                          step="0.01"
-                          value={newDevice.longitude}
-                          onChange={(event) =>
-                            setNewDevice((prev) => ({
-                              ...prev,
-                              longitude: parseFloat(event.target.value) || 85.14,
-                            }))
-                          }
-                          className="bg-slate-700 border-slate-600 text-white"
-                        />
+                        <div className="md:col-span-4">
+                          <DeviceLocationPicker
+                            value={newDeviceMapLocation}
+                            onChange={(next) => {
+                              setNewDeviceMapLocation(next);
+                              setNewDevice((prev) => ({
+                                ...prev,
+                                manualLocation:
+                                  next.address ||
+                                  next.label ||
+                                  prev.manualLocation,
+                                latitude: next.lat,
+                                longitude: next.lng,
+                              }));
+                            }}
+                          />
+                        </div>
                         <div className="flex items-end gap-2">
                           {newDevice.type === "real" ? (
                             <>
@@ -1786,24 +2372,47 @@ export const UserDashboard = () => {
                                 className={`bg-blue-500 hover:bg-blue-600 text-white ${newDeviceConnected ? "opacity-80" : ""}`}
                                 onClick={() => setNewDeviceConnected(true)}
                               >
-                                {newDeviceConnected ? "Connected" : "Connect Device"}
+                                {newDeviceConnected
+                                  ? "Connected"
+                                  : "Connect Device"}
                               </Button>
-                              <span className={`text-sm ${newDeviceConnected ? "text-emerald-300" : "text-amber-300"}`}>
-                                {newDeviceConnected ? "Real device connected" : "Connect to enable registration"}
+                              <span
+                                className={`text-sm ${newDeviceConnected ? "text-emerald-300" : "text-amber-300"}`}
+                              >
+                                {newDeviceConnected
+                                  ? "Real device connected"
+                                  : "Connect to enable registration"}
                               </span>
                             </>
                           ) : (
                             <div className="text-sm text-emerald-200">
-                              Simulator mode selected. Enter location and coordinates.
+                              Simulator mode selected. Enter location and
+                              coordinates.
                             </div>
                           )}
+                        </div>
+                        <div className="rounded-2xl border border-slate-700/70 bg-slate-950/35 px-4 py-3 text-sm text-slate-200 md:col-span-3">
+                          <p className="flex items-center gap-2 font-semibold text-cyan-300">
+                            <LocateFixed className="h-4 w-4" />
+                            Precise Coordinates
+                          </p>
+                          <p className="mt-1">
+                            {newDeviceMapLocation.lat.toFixed(5)},{" "}
+                            {newDeviceMapLocation.lng.toFixed(5)}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-400">
+                            Stored in database for geo-intelligence, clustering
+                            and radius insights.
+                          </p>
                         </div>
                         <Button
                           type="submit"
                           className="bg-green-500 hover:bg-green-600 text-white md:col-span-4"
                           disabled={addDeviceLoading}
                         >
-                          {addDeviceLoading ? "Registering..." : "Register Device"}
+                          {addDeviceLoading
+                            ? "Registering..."
+                            : "Register Device"}
                         </Button>
                       </form>
                     )}
@@ -1819,16 +2428,26 @@ export const UserDashboard = () => {
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <p className="text-sm font-semibold text-slate-950 dark:text-white">{device.name}</p>
-                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{device.uniqueId}</p>
+                            <p className="text-sm font-semibold text-slate-950 dark:text-white">
+                              {device.name}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                              {device.uniqueId}
+                            </p>
                           </div>
-                          <span className={`rounded-full px-2 py-1 text-[11px] font-semibold uppercase ${device.status === "active" ? "bg-green-500/15 text-green-700 dark:text-green-300" : "bg-red-500/15 text-red-700 dark:text-red-300"}`}>
+                          <span
+                            className={`rounded-full px-2 py-1 text-[11px] font-semibold uppercase ${device.status === "active" ? "bg-green-500/15 text-green-700 dark:text-green-300" : "bg-red-500/15 text-red-700 dark:text-red-300"}`}
+                          >
                             {device.status}
                           </span>
                         </div>
                         <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-600 dark:text-slate-400">
-                          <div className="rounded-xl bg-white/80 p-3 dark:bg-white/5">Battery: {device.battery ?? 0}%</div>
-                          <div className="rounded-xl bg-white/80 p-3 dark:bg-white/5">Type: {device.deviceType ?? "simulator"}</div>
+                          <div className="rounded-xl bg-white/80 p-3 dark:bg-white/5">
+                            Battery: {device.battery ?? 0}%
+                          </div>
+                          <div className="rounded-xl bg-white/80 p-3 dark:bg-white/5">
+                            Type: {device.deviceType ?? "simulator"}
+                          </div>
                         </div>
                       </button>
                     ))}
@@ -1846,16 +2465,24 @@ export const UserDashboard = () => {
                   transition={{ duration: 0.22 }}
                 >
                   <div>
-                    <h3 className="text-2xl font-black text-slate-950 dark:text-white">Reports</h3>
+                    <h3 className="text-2xl font-black text-slate-950 dark:text-white">
+                      Reports
+                    </h3>
                     <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
                       Export summary data when you need it.
                     </p>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2">
-                    <button onClick={downloadCSV} className="rounded-xl bg-blue-600 px-4 py-2 text-white">
+                    <button
+                      onClick={downloadCSV}
+                      className="rounded-xl bg-blue-600 px-4 py-2 text-white"
+                    >
                       Download CSV
                     </button>
-                    <button onClick={handleSaveData} className="rounded-xl bg-emerald-600 px-4 py-2 text-white">
+                    <button
+                      onClick={handleSaveData}
+                      className="rounded-xl bg-emerald-600 px-4 py-2 text-white"
+                    >
                       Download JSON
                     </button>
                   </div>
@@ -1871,9 +2498,15 @@ export const UserDashboard = () => {
                   exit={{ opacity: 0, y: -14 }}
                   transition={{ duration: 0.22 }}
                 >
-                  <h3 className="text-2xl font-black text-slate-950 dark:text-white">Profile</h3>
-                  <p className="mt-2 text-slate-600 dark:text-slate-400">Email: {user?.email}</p>
-                  <p className="text-slate-600 dark:text-slate-400">User ID: {user?.uid}</p>
+                  <h3 className="text-2xl font-black text-slate-950 dark:text-white">
+                    Profile
+                  </h3>
+                  <p className="mt-2 text-slate-600 dark:text-slate-400">
+                    Email: {user?.email}
+                  </p>
+                  <p className="text-slate-600 dark:text-slate-400">
+                    User ID: {user?.uid}
+                  </p>
                   <div className="mt-4">
                     <Button onClick={handleLogout} className="bg-red-500">
                       Logout
@@ -1891,9 +2524,13 @@ export const UserDashboard = () => {
                   exit={{ opacity: 0, y: -14 }}
                   transition={{ duration: 0.22 }}
                 >
-                  <h3 className="text-2xl font-black text-slate-950 dark:text-white">Settings</h3>
+                  <h3 className="text-2xl font-black text-slate-950 dark:text-white">
+                    Settings
+                  </h3>
                   <div className="flex items-center gap-3 mb-4">
-                    <label className="text-slate-600 dark:text-slate-400">Simulator only:</label>
+                    <label className="text-slate-600 dark:text-slate-400">
+                      Simulator only:
+                    </label>
                     <button
                       onClick={() => setSimulatorOnly((s) => !s)}
                       className={`px-3 py-2 rounded ${simulatorOnly ? "bg-green-600 text-white" : "bg-slate-700 text-white"}`}
@@ -1923,7 +2560,9 @@ export const UserDashboard = () => {
                   exit={{ opacity: 0, y: -14 }}
                   transition={{ duration: 0.22 }}
                 >
-                  <h3 className="text-2xl font-black text-slate-950 dark:text-white">Help</h3>
+                  <h3 className="text-2xl font-black text-slate-950 dark:text-white">
+                    Help
+                  </h3>
                   <p className="mt-2 text-slate-600 dark:text-slate-400">
                     This dashboard runs in simulator-only mode by default and
                     uses generated readings. Use the Start/Stop buttons to run
