@@ -1098,8 +1098,8 @@ export const AdminPanel = () => {
                         </div>
 
                         <div className="grid gap-4 lg:grid-cols-2">
-                          <WaterGraph data={tdsData} type="tds" />
-                          <WaterGraph data={phTurbidityData} type="ph" />
+                          <WaterGraph data={tdsData} type="tds" title="TDS Levels" color="hsl(var(--chart-1))" unit="ppm" />
+                          <WaterGraph data={phTurbidityData} type="ph" title="pH & Turbidity" color="hsl(var(--chart-2))" unit="pH" />
                         </div>
                       </div>
                     )}

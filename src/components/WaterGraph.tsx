@@ -12,6 +12,9 @@ import {
 type Props = {
   data: WaterPoint[];
   type: "tds" | "ph" | "turbidity";
+  title?: string;
+  color?: string;
+  unit?: string;
 };
 
 type WaterPoint = {
@@ -27,7 +30,7 @@ type DotRendererProps = {
   index?: number;
 };
 
-export const WaterGraph = ({ data, type }: Props) => {
+export const WaterGraph = ({ data, type, title = "Graph", color = "#3b82f6", unit = "" }: Props) => {
   const visibleData = data.slice(-10).map((point, index) => ({ ...point, time: index + 1 }));
 
   const computeDomain = () => {
@@ -44,7 +47,7 @@ export const WaterGraph = ({ data, type }: Props) => {
   return (
     <div className="bg-white/5 backdrop-blur-md rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-[1.02] transition duration-300">
       {" "}
-      <h2 className="text-sm font-semibold mb-3">📊 Water Trends</h2>
+      <h2 className="text-sm font-semibold mb-3">{title}</h2>
       <ResponsiveContainer width="100%" height={250}>
         <LineChart data={visibleData}>
           <CartesianGrid stroke="#0b1220" strokeDasharray="3 6" />

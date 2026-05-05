@@ -4,7 +4,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { AlertCircle, Lock, User, Eye, EyeOff, CheckCircle2, Info } from "lucide-react";
+import { AlertCircle, ArrowLeft, Lock, User, Eye, EyeOff, CheckCircle2, Info } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/hooks/use-toast";
 
@@ -196,7 +196,7 @@ export const Login = () => {
 
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-gradient-to-br from-sky-50 to-blue-50 px-4 py-8 flex items-center justify-center dark:from-slate-950 dark:to-slate-900">
+    <main className="relative min-h-screen overflow-hidden bg-transparent px-4 py-8 flex items-center justify-center">
       {/* Light mode background with subtle gradient */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none dark:hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-cyan-100/30 via-transparent to-blue-100/20" />
@@ -268,10 +268,20 @@ export const Login = () => {
         transition={{ duration: 0.45, ease: "easeOut" }}
         className="relative z-10 w-full max-w-[420px]"
       >
-        <div className="relative overflow-hidden rounded-[2rem] border border-cyan-200/40 bg-white/95 px-6 py-7 shadow-[0_24px_80px_-36px_rgba(6,182,212,0.15)] backdrop-blur-xl dark:border-cyan-500/30 dark:bg-slate-900/80 dark:shadow-[0_24px_80px_-36px_rgba(6,182,212,0.25)]">
+        <div className="relative overflow-hidden rounded-[2rem] border border-cyan-200/40 bg-white/95 px-6 py-7 shadow-[0_24px_80px_-36px_rgba(6,182,212,0.15)] backdrop-blur-xl dark:border-cyan-500/30 dark:bg-slate-900/80 dark:shadow-[0_24px_80px_-36px_rgba(6,182,212,0.25)] clay-card">
           <div className="absolute inset-x-0 top-0 h-14 bg-gradient-to-r from-cyan-100/60 via-cyan-50/40 to-transparent dark:from-cyan-500/20 dark:via-cyan-500/10 dark:to-transparent" />
 
-          {/* Theme toggle */}
+          {/* Back button and theme toggle */}
+          <div className="absolute left-4 top-4 z-20">
+            <button
+              type="button"
+              onClick={() => navigate("/")}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white/90 p-2 text-slate-700 shadow-sm shadow-slate-900/10 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-200 dark:hover:bg-slate-800"
+              aria-label="Back to landing page"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+          </div>
           <div className="absolute right-4 top-4 z-20">
             <ThemeToggle />
           </div>
@@ -302,8 +312,8 @@ export const Login = () => {
                 aria-label="Select user role"
                 className={`inline-flex items-center justify-center gap-2 rounded-[1rem] px-4 py-3 text-sm font-semibold transition-all duration-200 ${
                   selectedRole === "user"
-                    ? "bg-gradient-to-r from-cyan-600 to-cyan-500 text-white shadow-[0_12px_26px_-14px_rgba(8,145,178,0.9)]"
-                    : "bg-transparent text-slate-600 hover:bg-white/70 dark:text-slate-300 dark:hover:bg-slate-700/70"
+                    ? "bg-gradient-to-r from-cyan-600 to-cyan-500 text-white shadow-[0_12px_26px_-14px_rgba(8,145,178,0.9)] clay-button"
+                      : "bg-transparent text-slate-600 hover:bg-white/70 dark:text-slate-300 dark:hover:bg-slate-700/70 clay-toggle"
                 }`}
               >
                 <User className="h-4 w-4" />
@@ -317,10 +327,10 @@ export const Login = () => {
                 disabled={!isLogin}
                 className={`inline-flex items-center justify-center gap-2 rounded-[1rem] px-4 py-3 text-sm font-semibold transition-all duration-200 ${
                   !isLogin
-                    ? "cursor-not-allowed bg-slate-200 text-slate-400 dark:bg-slate-800/60 dark:text-slate-500"
+                    ? "cursor-not-allowed bg-slate-200 text-slate-400 dark:bg-slate-800/60 dark:text-slate-500 clay-toggle"
                     : selectedRole === "admin"
-                    ? "bg-gradient-to-r from-cyan-600 to-cyan-500 text-white shadow-[0_12px_26px_-14px_rgba(8,145,178,0.9)]"
-                    : "bg-transparent text-slate-600 hover:bg-white/70 dark:text-slate-300 dark:hover:bg-slate-700/70"
+                    ? "bg-gradient-to-r from-cyan-600 to-cyan-500 text-white shadow-[0_12px_26px_-14px_rgba(8,145,178,0.9)] clay-button"
+                    : "bg-transparent text-slate-600 hover:bg-white/70 dark:text-slate-300 dark:hover:bg-slate-700/70 clay-toggle"
                 }`}
               >
                 <Lock className="h-4 w-4" />
@@ -343,7 +353,7 @@ export const Login = () => {
                   exit={{ opacity: 0, height: 0 }}
                   type="button"
                   onClick={() => setShowDemoHint(!showDemoHint)}
-                  className="mt-3 w-full inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-300/50 bg-cyan-50/60 px-3 py-2 text-xs font-medium text-cyan-700 transition hover:bg-cyan-100/70 dark:border-cyan-500/30 dark:bg-cyan-500/10 dark:text-cyan-300 dark:hover:bg-cyan-500/15"
+                  className="mt-3 w-full inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-300/50 bg-cyan-50/60 px-3 py-2 text-xs font-medium text-cyan-700 transition hover:bg-cyan-100/70 dark:border-cyan-500/30 dark:bg-cyan-500/10 dark:text-cyan-300 dark:hover:bg-cyan-500/15 clay-button clay-ghost"
                 >
                   <Info className="h-3.5 w-3.5" />
                   <span>Demo accounts available</span>
@@ -398,7 +408,7 @@ export const Login = () => {
                     autoComplete="email"
                     aria-invalid={touched.email && !isValidEmail}
                     aria-describedby={touched.email && !isValidEmail ? "email-error" : undefined}
-                    className={`h-12 w-full rounded-2xl border bg-slate-50 px-4 text-slate-700 shadow-inner shadow-slate-100 placeholder:text-slate-400 transition-all focus:ring-2 dark:bg-slate-900/80 dark:text-white dark:shadow-none dark:placeholder:text-slate-500 ${
+                    className={`h-12 w-full rounded-2xl border bg-slate-50 px-4 text-slate-700 shadow-inner shadow-slate-100 placeholder:text-slate-400 transition-all focus:ring-2 dark:bg-slate-900/80 dark:text-white dark:shadow-none dark:placeholder:text-slate-500 clay-input ${
                       touched.email
                         ? isValidEmail
                           ? "border-green-500/50 focus:border-green-500 focus:ring-green-500/20"
@@ -434,7 +444,7 @@ export const Login = () => {
                     autoComplete={isLogin ? "current-password" : "new-password"}
                     aria-invalid={touched.password && !isValidPassword}
                     aria-describedby={touched.password && !isValidPassword ? "password-error" : undefined}
-                    className={`h-12 w-full rounded-2xl border bg-slate-50 px-4 pr-12 text-slate-700 shadow-inner shadow-slate-100 placeholder:text-slate-400 transition-all focus:ring-2 dark:bg-slate-900/80 dark:text-white dark:shadow-none dark:placeholder:text-slate-500 ${
+                    className={`h-12 w-full rounded-2xl border bg-slate-50 px-4 pr-12 text-slate-700 shadow-inner shadow-slate-100 placeholder:text-slate-400 transition-all focus:ring-2 dark:bg-slate-900/80 dark:text-white dark:shadow-none dark:placeholder:text-slate-500 clay-input ${
                       touched.password
                         ? isValidPassword
                           ? "border-green-500/50 focus:border-green-500 focus:ring-green-500/20"
@@ -477,7 +487,7 @@ export const Login = () => {
                     required
                     aria-invalid={touched.recovery && !isRecoveryCodeValid}
                     aria-describedby={touched.recovery && !isRecoveryCodeValid ? "recovery-error" : undefined}
-                    className={`h-12 w-full rounded-2xl border bg-slate-50 px-4 text-slate-700 shadow-inner shadow-slate-100 placeholder:text-slate-400 transition-all focus:ring-2 dark:bg-slate-900/80 dark:text-white dark:shadow-none dark:placeholder:text-slate-500 ${
+                    className={`h-12 w-full rounded-2xl border bg-slate-50 px-4 text-slate-700 shadow-inner shadow-slate-100 placeholder:text-slate-400 transition-all focus:ring-2 dark:bg-slate-900/80 dark:text-white dark:shadow-none dark:placeholder:text-slate-500 clay-input ${
                       touched.email
                         ? isRecoveryCodeValid
                           ? "border-green-500/50 focus:border-green-500 focus:ring-green-500/20"
@@ -529,7 +539,7 @@ export const Login = () => {
                         onChange={(e) => setOrganizationType(e.target.value)}
                         onBlur={() => setTouched({ ...touched, organization: true })}
                         required
-                        className={`h-12 w-full rounded-2xl border bg-slate-50 px-4 text-slate-700 dark:bg-slate-900/80 dark:text-white focus:ring-2 focus:ring-cyan-200`}
+                        className={`h-12 w-full rounded-2xl border bg-slate-50 px-4 text-slate-700 dark:bg-slate-900/80 dark:text-white focus:ring-2 focus:ring-cyan-200 clay-input`}
                       >
                         <option value="">Select your organization type</option>
                         <option value="School">🏫 School</option>
@@ -558,7 +568,7 @@ export const Login = () => {
                             value={customOrganization}
                             onChange={(e) => setCustomOrganization(e.target.value)}
                             onBlur={() => setTouched({ ...touched, organization: true })}
-                            className="mt-1 h-12 w-full rounded-2xl border bg-slate-50 px-4 text-slate-700 dark:bg-slate-900/80 dark:text-white"
+                            className="mt-1 h-12 w-full rounded-2xl border bg-slate-50 px-4 text-slate-700 dark:bg-slate-900/80 dark:text-white clay-input"
                           />
                           {organizationType === 'Other' && !customOrganization && touched.organization && (
                             <p className="text-xs text-red-600 dark:text-red-400">Please enter your organization name.</p>
@@ -598,7 +608,7 @@ export const Login = () => {
                         }}
                         required
                         aria-invalid={usernameAvailable === false || !isValidUsername}
-                        className={`h-12 w-full rounded-2xl border bg-slate-50 px-4 text-slate-700 dark:bg-slate-900/80 dark:text-white ${
+                        className={`h-12 w-full rounded-2xl border bg-slate-50 px-4 text-slate-700 dark:bg-slate-900/80 dark:text-white clay-input ${
                           usernameAvailable === false ? "border-red-500/50" : ""
                         }`}
                       />
@@ -640,7 +650,7 @@ export const Login = () => {
               <Button
                 type="submit"
                 disabled={loading || !isFormValid}
-                className="h-12 w-full rounded-2xl bg-gradient-to-r from-cyan-600 via-cyan-500 to-emerald-500 text-base font-semibold text-white shadow-[0_14px_30px_-18px_rgba(8,145,178,0.95)] transition hover:from-cyan-700 hover:to-emerald-600 disabled:opacity-60 dark:shadow-[0_14px_30px_-18px_rgba(6,182,212,0.5)]"
+                className="h-12 w-full rounded-2xl bg-gradient-to-r from-cyan-600 via-cyan-500 to-emerald-500 text-base font-semibold text-white shadow-[0_14px_30px_-18px_rgba(8,145,178,0.95)] transition hover:from-cyan-700 hover:to-emerald-600 disabled:opacity-60 dark:shadow-[0_14px_30px_-18px_rgba(6,182,212,0.5)] clay-button"
               >
                 {loading && (
                   <motion.span

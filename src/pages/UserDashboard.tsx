@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { AnimatePresence, motion } from "framer-motion";
@@ -889,7 +889,7 @@ export const UserDashboard = () => {
       {syncError && (
         <div className="fixed top-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg z-50">
           {syncError}
-          <button onClick={() => setSyncError(null)} className="ml-2 text-white hover:text-red-200">×</button>
+          <button onClick={() => setSyncError(null)} className="ml-2 text-white hover:text-red-200">├ù</button>
         </div>
       )}
       <div className="bg-white/90 dark:bg-slate-900/85 border-b border-slate-200/80 dark:border-slate-700 sticky top-0 z-50 shadow-sm backdrop-blur-xl">
@@ -1029,7 +1029,7 @@ export const UserDashboard = () => {
                   >
                     {devices.map((device) => (
                       <option key={device.id} value={device.id}>
-                        {device.name} · {device.status ?? "unknown"}
+                        {device.name} ┬╖ {device.status ?? "unknown"}
                       </option>
                     ))}
                   </select>
@@ -1570,7 +1570,7 @@ export const UserDashboard = () => {
                       <p className="mt-1 text-lg font-semibold text-slate-950 dark:text-white">{selectedDevice?.name ?? "No device selected"}</p>
                       <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
                         {latest
-                          ? `Latest pH ${latest.ph}, TDS ${latest.tds} ppm, Turbidity ${latest.turbidity} NTU, Temperature ${latest.temperature} °C`
+                          ? `Latest pH ${latest.ph}, TDS ${latest.tds} ppm, Turbidity ${latest.turbidity} NTU, Temperature ${latest.temperature} ┬░C`
                           : "No readings available yet."}
                       </p>
                     </div>
@@ -1648,7 +1648,7 @@ export const UserDashboard = () => {
                           <p>pH: {latest.ph}</p>
                           <p>TDS: {latest.tds} ppm</p>
                           <p>Turbidity: {latest.turbidity} NTU</p>
-                          <p>Temperature: {latest.temperature} °C</p>
+                          <p>Temperature: {latest.temperature} ┬░C</p>
                           <p>Status: {latest.status}</p>
                         </div>
                       ) : (

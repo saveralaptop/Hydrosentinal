@@ -6,6 +6,37 @@
 All colors MUST be HSL.
 */
 
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -150%;
+  width: 150%;
+  height: 100%;
+
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255,255,255,0.3),
+    transparent
+  );
+
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  100% {
+    left: 150%;
+  }
+}
+
 @layer base {
   :root {
     /* Light theme - soft SaaS surface */
@@ -51,6 +82,15 @@ All colors MUST be HSL.
     --ring: 186 100% 55%;
 
     --radius: 1rem;
+
+    --background-gradient-light: linear-gradient(135deg, #f8fbff, #e6f7ff, #f0fcff);
+    --background-gradient-dark: radial-gradient(circle at top left, rgba(5, 17, 40, 0.92), rgba(10, 34, 68, 0.86)), linear-gradient(135deg, #041123 0%, #08203a 100%);
+    --background-accent-light: rgba(173, 231, 255, 0.32);
+    --background-accent-soft: rgba(180, 230, 255, 0.18);
+    --background-accent-strong: rgba(20, 140, 210, 0.18);
+    --background-overlay-dark: rgba(5, 16, 36, 0.5);
+    --light-blob-a: rgba(187, 241, 255, 0.42);
+    --light-blob-b: rgba(163, 226, 255, 0.28);
 
     --sidebar-background: 205 18% 92%;
     --sidebar-foreground: 215 18% 18%;
@@ -219,16 +259,18 @@ All colors MUST be HSL.
   }
 
   html {
-    background: linear-gradient(135deg, hsl(205 24% 96%), hsl(205 31% 92%));
+    background: var(--background-gradient-light);
+    transition: background 450ms ease;
   }
 
   html.dark {
-    background: transparent;
+    background: var(--background-gradient-dark);
   }
 
   body {
     @apply text-foreground;
     overflow-x: hidden;
+    transition: background 350ms ease, color 350ms ease, border-color 350ms ease, box-shadow 350ms ease;
   }
 
   body {
@@ -254,6 +296,120 @@ All colors MUST be HSL.
   z-index: 1;
   min-height: 100vh;
   background: transparent;
+  transition: background 350ms ease, color 350ms ease, border-color 350ms ease, box-shadow 350ms ease;
+}
+
+.app-scene-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background: var(--background-gradient-light);
+  transition: background 450ms ease, opacity 450ms ease;
+}
+
+.dark .app-scene-bg {
+  background: var(--background-gradient-dark);
+}
+
+.light-scene-overlay,
+.dark-overlay-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  opacity: 0.85;
+  transition: opacity 450ms ease, transform 450ms ease;
+}
+
+.light-scene-overlay {
+  background: radial-gradient(circle at 25% 20%, rgba(255, 255, 255, 0.72), transparent 28%), radial-gradient(circle at 80% 30%, rgba(206, 245, 255, 0.45), transparent 25%);
+}
+
+.dark-overlay-layer {
+  background: radial-gradient(circle at 15% 18%, rgba(56, 200, 255, 0.14), transparent 26%), radial-gradient(circle at 75% 80%, rgba(12, 200, 255, 0.12), transparent 28%);
+}
+
+.dark-wave-layer {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: radial-gradient(circle at 15% 20%, rgba(0, 220, 255, 0.12), transparent 18%), radial-gradient(circle at 80% 30%, rgba(0, 145, 255, 0.08), transparent 14%);
+}
+
+.dark-scene-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.98;
+}
+
+.light-blob {
+  position: fixed;
+  border-radius: 999px;
+  filter: blur(72px);
+  pointer-events: none;
+  will-change: transform, opacity;
+  animation: float-soft 10s ease-in-out infinite alternate;
+}
+
+.light-blob.blob-1 {
+  width: 26rem;
+  height: 26rem;
+  top: -5rem;
+  left: -6rem;
+  background: var(--light-blob-a);
+  animation-delay: 0s;
+}
+
+.light-blob.blob-2 {
+  width: 18rem;
+  height: 18rem;
+  top: 20rem;
+  right: -4rem;
+  background: var(--light-blob-b);
+  animation-delay: 2s;
+}
+
+.light-blob.blob-3 {
+  width: 22rem;
+  height: 22rem;
+  bottom: 6rem;
+  left: 20rem;
+  background: rgba(187, 241, 255, 0.22);
+  animation-delay: 4s;
+}
+
+.light-blob.blob-4 {
+  width: 16rem;
+  height: 16rem;
+  bottom: -3rem;
+  right: 14rem;
+  background: rgba(159, 226, 255, 0.18);
+  animation-delay: 6s;
+}
+
+@keyframes float-soft {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-18px) scale(1.02);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .light-blob,
+  .dark-wave-layer {
+    animation: none;
+  }
 }
 
 .animated-light-bg {

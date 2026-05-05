@@ -5,6 +5,8 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { useEffect, useState } from "react";
+// import Loader from "./components/Loader.tsx";
 import NotFound from "./pages/NotFound.tsx";
 import Login from "./pages/Login.tsx";
 import Index from "./pages/Index.tsx";
@@ -46,6 +48,17 @@ const ProtectedRoute = ({
 
 const AppRoutes = () => {
   const { loading } = useAuth();
+  // const [showLoader, setShowLoader] = useState(true);
+  //   useEffect(() => {
+  //   if (!loading) {
+  //     setTimeout(() => {
+  //       setShowLoader(false);
+  //     }, 800); // minimum display time
+  //   }
+  // }, [loading]);
+  // if (loading || showLoader) {
+  //   return <Loader />;
+  // }
 
   if (loading) {
     return (
