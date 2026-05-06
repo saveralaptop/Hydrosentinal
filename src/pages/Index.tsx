@@ -142,8 +142,6 @@ const Index = () => {
 
           <div className="grid gap-10 lg:grid-cols-[1.25fr_0.85fr] lg:items-center">
             <div className="space-y-6">
-              
-
               <motion.h2
                 initial={{ opacity: 0, y: 18 }}
                 animate={{ opacity: 1, y: 0 }}

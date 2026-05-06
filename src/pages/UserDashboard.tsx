@@ -182,6 +182,7 @@ export const UserDashboard = () => {
   const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
   const [showDataPanel, setShowDataPanel] = useState(false);
   const [rightRailOpen, setRightRailOpen] = useState(false);
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [addDeviceLoading, setAddDeviceLoading] = useState(false);
 
   //   const [devices, setDevices] = useState([]);
@@ -474,35 +475,12 @@ export const UserDashboard = () => {
         createdAt: new Date().toISOString(),
       };
 
-      let created: DeviceRecord;
+      const created: DeviceRecord = { id: deviceId, ...payload };
 
-      try {
-        const deviceRef = doc(db, "users", user.uid, "devices", deviceId);
-        const existingDevice = await getDoc(deviceRef);
-
-        await setDoc(deviceRef, payload);
-        created = { id: deviceId, ...payload };
-        console.log("[Dashboard] Saved device to user collection", created);
-
-        try {
-          await setDoc(doc(db, "devices", deviceId), payload);
-          console.log("[Dashboard] Saved device to root mirror", deviceId);
-        } catch {
-          // Root devices mirror may be unavailable depending on Firestore rules.
-        }
-
-        if (!existingDevice.exists()) {
-          queuePendingDeviceUpsert(created);
-        }
-      } catch (error) {
-        console.error("[Dashboard] Firestore error:", error);
-        created = { id: deviceId, ...payload };
-      }
-
+      void queuePendingDeviceUpsert(created);
       upsertLocalDevice(created);
       setDevices((prev) => [created, ...prev]);
       setSelectedDeviceId(created.id);
-      queuePendingDeviceUpsert(created);
       setNewDevice({
         name: "",
         type: "simulator",
@@ -564,31 +542,12 @@ export const UserDashboard = () => {
         createdAt: new Date().toISOString(),
       };
 
-      let created: DeviceRecord;
-      try {
-        const deviceRef = doc(db, "users", user.uid, "devices", deviceId);
-        const existingDevice = await getDoc(deviceRef);
-        await setDoc(deviceRef, payload);
-        created = { id: deviceId, ...payload };
+      const created: DeviceRecord = { id: deviceId, ...payload };
 
-        try {
-          await setDoc(doc(db, "devices", deviceId), payload);
-        } catch {
-          // Root devices mirror may be unavailable depending on Firestore rules.
-        }
-
-        if (!existingDevice.exists()) {
-          queuePendingDeviceUpsert(created);
-        }
-      } catch (error) {
-        console.error("[Dashboard] Firestore error from modal:", error);
-        created = { id: deviceId, ...payload };
-      }
-
+      void queuePendingDeviceUpsert(created);
       upsertLocalDevice(created);
       setDevices((prev) => [created, ...prev]);
       setSelectedDeviceId(created.id);
-      queuePendingDeviceUpsert(created);
       setActiveTab("Hardware");
       console.log("[Dashboard] Device created via modal:", created.id);
       return true;
@@ -606,22 +565,7 @@ export const UserDashboard = () => {
       return;
     }
 
-    try {
-      await Promise.all([
-        deleteDoc(doc(db, "users", user!.uid, "devices", deviceId)),
-        deleteDoc(doc(db, "devices", deviceId)),
-      ]);
-    } catch {
-      // Local fallback still applies.
-    }
-
-    try {
-      await deleteDoc(doc(db, "devices", deviceId));
-    } catch {
-      // Root devices mirror may be unavailable depending on Firestore rules.
-    }
-
-    queuePendingDeviceDelete(user!.uid, deviceId);
+    void queuePendingDeviceDelete(user!.uid, deviceId);
     removeLocalDevice(deviceId);
     const nextDevices = devices.filter((device) => device.id !== deviceId);
     setDevices(nextDevices);
@@ -768,7 +712,7 @@ export const UserDashboard = () => {
     };
 
     void loadAlerts();
-  }, [user, devices]);
+  }, [user]);
 
   const addNewReading = async () => {
     if (!selectedDevice) {
@@ -1223,7 +1167,11 @@ export const UserDashboard = () => {
         </div>
       </div>
 
-      <div className="max-w-[96rem] mx-auto px-4 py-8 sm:px-6 lg:px-8 space-y-8 xl:pl-[15.5rem] xl:pr-[5.25rem]">
+      <div
+        className={`max-w-[96rem] mx-auto px-4 py-8 sm:px-6 lg:px-8 space-y-8 transition-[padding] duration-300 ${
+          leftSidebarOpen ? "xl:pl-[15.5rem]" : "xl:pl-6"
+        } xl:pr-[5.25rem]`}
+      >
         {devicesLoading && devices.length === 0 ? (
           <div className="rounded-3xl border border-slate-200/80 bg-white/90 p-6 text-slate-700 shadow-xl dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-300">
             <div className="flex items-center gap-3">
@@ -1477,52 +1425,87 @@ export const UserDashboard = () => {
           </div>
         </motion.section>
 
-        <aside className="hidden xl:flex fixed left-4 top-20 bottom-4 z-40 w-56 flex-col sidebar-premium p-4">
-          <div className="mb-5 flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-cyan-400/20 text-cyan-200">
-              <LayoutDashboard className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-base font-semibold text-white">HydroSense</p>
-              <p className="text-xs text-slate-400">User Panel</p>
-            </div>
-          </div>
-
-          <nav className="flex-1 space-y-1 overflow-y-auto pr-1">
-            {[
-              { label: "Dashboard", icon: LayoutDashboard, tab: "Overview" },
-              { label: "Charts", icon: ChartLine, tab: "Charts" },
-              {
-                label: "Water Distribution",
-                icon: Waves,
-                tab: "Water Distribution",
-              },
-              { label: "Hardware", icon: Cpu, tab: "Hardware" },
-              { label: "Artificial Intelligence", icon: Brain, tab: "AI" },
-              { label: "Cloud", icon: Cloud, tab: "Cloud" },
-              { label: "Reports", icon: FileBarChart2, tab: "Reports" },
-              { label: "Profile", icon: UserRound, tab: "Profile" },
-              { label: "Settings", icon: Settings, tab: "Settings" },
-              { label: "Feedback", icon: MessageSquare, tab: "Help" },
-              { label: "Help", icon: HelpCircle, tab: "Help" },
-            ].map(({ label, icon: Icon, tab }) => {
-              const active =
-                activeTab === tab ||
-                (tab === "Overview" && activeTab === "Overview");
-
-              return (
+        <AnimatePresence initial={false}>
+          {leftSidebarOpen ? (
+            <motion.aside
+              key="left-sidebar-open"
+              initial={{ opacity: 0, x: -24 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -24 }}
+              transition={{ duration: 0.2 }}
+              className="hidden xl:flex fixed left-4 top-20 bottom-4 z-40 w-56 flex-col sidebar-premium p-4"
+            >
+              <div className="mb-5 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-cyan-400/20 text-cyan-200">
+                    <LayoutDashboard className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-base font-semibold text-white">HydroSense</p>
+                    <p className="text-xs text-slate-400">User Panel</p>
+                  </div>
+                </div>
                 <button
-                  key={label}
-                  onClick={() => setActiveTab(tab as any)}
-                  className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-all duration-200 ${active ? "sidebar-item-active" : "text-slate-700 hover:bg-slate-200 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-700/70 dark:hover:text-white"}`}
+                  type="button"
+                  onClick={() => setLeftSidebarOpen(false)}
+                  className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 hover:text-white"
+                  aria-label="Collapse left navigation"
                 >
-                  <Icon className="h-4 w-4" />
-                  <span>{label}</span>
+                  <X className="h-4 w-4" />
                 </button>
-              );
-            })}
-          </nav>
-        </aside>
+              </div>
+
+              <nav className="flex-1 space-y-1 overflow-y-auto pr-1">
+                {[
+                  { label: "Dashboard", icon: LayoutDashboard, tab: "Overview" },
+                  { label: "Charts", icon: ChartLine, tab: "Charts" },
+                  {
+                    label: "Water Distribution",
+                    icon: Waves,
+                    tab: "Water Distribution",
+                  },
+                  { label: "Hardware", icon: Cpu, tab: "Hardware" },
+                  { label: "Artificial Intelligence", icon: Brain, tab: "AI" },
+                  { label: "Cloud", icon: Cloud, tab: "Cloud" },
+                  { label: "Reports", icon: FileBarChart2, tab: "Reports" },
+                  { label: "Profile", icon: UserRound, tab: "Profile" },
+                  { label: "Settings", icon: Settings, tab: "Settings" },
+                  { label: "Feedback", icon: MessageSquare, tab: "Help" },
+                  { label: "Help", icon: HelpCircle, tab: "Help" },
+                ].map(({ label, icon: Icon, tab }) => {
+                  const active =
+                    activeTab === tab ||
+                    (tab === "Overview" && activeTab === "Overview");
+
+                  return (
+                    <button
+                      key={label}
+                      onClick={() => setActiveTab(tab as DashboardTab)}
+                      className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-all duration-200 ${active ? "sidebar-item-active" : "text-slate-700 hover:bg-slate-200 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-700/70 dark:hover:text-white"}`}
+                    >
+                      <Icon className="h-4 w-4" />
+                      <span>{label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+            </motion.aside>
+          ) : (
+            <motion.button
+              key="left-sidebar-toggle"
+              type="button"
+              initial={{ opacity: 0, x: -16 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -16 }}
+              transition={{ duration: 0.2 }}
+              onClick={() => setLeftSidebarOpen(true)}
+              className="hidden xl:flex fixed left-4 top-24 z-40 h-12 w-12 items-center justify-center rounded-2xl border border-slate-200/80 bg-white/90 text-slate-700 shadow-2xl shadow-slate-950/10 backdrop-blur-xl transition hover:bg-white hover:text-slate-950 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-300 dark:hover:text-white"
+              aria-label="Open left navigation"
+            >
+              <LayoutDashboard className="h-5 w-5" />
+            </motion.button>
+          )}
+        </AnimatePresence>
 
         <aside className="fixed right-3 top-24 z-40 hidden w-14 flex-col items-center gap-3 rounded-full border border-slate-200/80 bg-white/90 py-3 text-slate-700 shadow-2xl shadow-slate-950/10 backdrop-blur-xl dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-300 xl:flex">
           {[

@@ -7,6 +7,12 @@ import {
 } from "firebase/auth";
 import { auth, db } from "../firebase";
 import { doc, getDoc, setDoc, collection, getDocs, query, where, serverTimestamp } from "firebase/firestore";
+import {
+  queuePendingSignup as syncQueuePendingSignup,
+  removePendingSignup as syncRemovePendingSignup,
+  readPendingSignups as syncReadPendingSignups,
+} from "@/lib/syncEngine";
+import { getConnectionSnapshot } from "@/lib/connectionManager";
 
 type UserRole = "user" | "admin";
 
@@ -47,42 +53,42 @@ const DEMO_ACCOUNTS: LocalAccount[] = [
     email: "user@demo.com",
     password: "password",
     role: "user",
-    resetCode: "demo-code",
+    resetCode: "1234",
   },
   {
     uid: "admin-nikhil",
     email: "nikhil@admin.com",
     password: "Nikhil",
     role: "admin",
-    resetCode: "nikhil",
+    resetCode: "1234",
   },
   {
     uid: "admin-harsh",
     email: "harsh@admin.com",
     password: "Harsh",
     role: "admin",
-    resetCode: "harsh",
+    resetCode: "1234",
   },
   {
     uid: "admin-himanshu",
     email: "himanshu@admin.com",
     password: "Himanshu",
     role: "admin",
-    resetCode: "himanshu",
+    resetCode: "1234",
   },
   {
     uid: "admin-kartik",
     email: "kartik@admin.com",
     password: "Kartik",
     role: "admin",
-    resetCode: "kartik",
+    resetCode: "1234",
   },
   {
     uid: "admin-khushi",
     email: "khushi@admin.com",
     password: "Khushi",
     role: "admin",
-    resetCode: "khushi",
+    resetCode: "1234",
   },
 ];
 
@@ -92,7 +98,7 @@ interface AuthContextType {
   loading: boolean;
   login: (email: string, password: string, role: UserRole) => Promise<void>;
   signup: (email: string, password: string, role: UserRole, resetCode: string) => Promise<void>;
-  signupWithProfile: (data: SignupData) => Promise<{ uid: string; systemId: string }>;
+  signupWithProfile: (data: SignupData) => Promise<{ uid: string; systemId: string; syncStatus: "synced" | "pending" }>;
   checkUsernameAvailable: (username: string) => Promise<boolean>;
   resetPasswordWithRecoveryCode: (email: string, password: string, recoveryCode: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -160,25 +166,36 @@ const readSession = (): { user: AuthUser; role: UserRole } | null => {
 type PendingSignup = SignupData & {
   selectedRole: UserRole;
   queuedAt: string;
+  authUid?: string;
+  syncUid?: string;
 };
 
 const normalizeEmail = (email: string): string => email.trim().toLowerCase();
 
+const buildPendingSignup = (
+  data: SignupData,
+  selectedRole: UserRole,
+  syncUid?: string,
+  authUid?: string,
+): PendingSignup => ({
+  email: normalizeEmail(data.email),
+  password: data.password,
+  fullName: data.fullName,
+  username: normalizeUsername(data.username),
+  organizationType: data.organizationType,
+  organizationName: data.organizationName,
+  recoveryCode: data.recoveryCode,
+  selectedRole,
+  queuedAt: new Date().toISOString(),
+  syncUid,
+  authUid,
+});
+
 const isBrowserOnline = () =>
-  typeof window === "undefined" ? true : window.navigator.onLine;
+  typeof window === "undefined" ? true : getConnectionSnapshot().status !== "OFFLINE";
 
 const readPendingSignups = (): PendingSignup[] => {
-  if (typeof window === "undefined") {
-    return [];
-  }
-
-  try {
-    const raw = window.localStorage.getItem(PENDING_SIGNUPS_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as PendingSignup[];
-  } catch {
-    return [];
-  }
+  return syncReadPendingSignups();
 };
 
 const savePendingSignups = (items: PendingSignup[]) => {
@@ -190,23 +207,22 @@ const savePendingSignups = (items: PendingSignup[]) => {
 };
 
 const queuePendingSignup = (signup: PendingSignup) => {
-  const existing = readPendingSignups().filter(
-    (item) => normalizeEmail(item.email) !== normalizeEmail(signup.email),
-  );
-  savePendingSignups([...existing, signup]);
+  void syncQueuePendingSignup(signup);
 };
 
 const removePendingSignup = (email: string) => {
-  const next = readPendingSignups().filter(
-    (item) => normalizeEmail(item.email) !== normalizeEmail(email),
-  );
-  savePendingSignups(next);
+  syncRemovePendingSignup(email);
 };
 
 const getAuthErrorCode = (error: unknown) =>
   typeof error === "object" && error !== null && "code" in error
     ? String((error as { code?: string }).code ?? "")
     : "";
+
+const isRetryableSyncError = (error: unknown) => {
+  const code = getAuthErrorCode(error);
+  return ["auth/network-request-failed", "unavailable", "deadline-exceeded", "resource-exhausted", "aborted"].includes(code);
+};
 
 const isTransientAuthError = (error: unknown) => {
   const code = getAuthErrorCode(error);
@@ -274,11 +290,69 @@ const persistUserDoc = async (
     );
   } catch (error) {
     console.warn("Firestore sync skipped:", error);
+    throw error;
   }
 };
 
-const getErrorMessage = (error: unknown) =>
-  error instanceof Error ? error.message : "Authentication failed";
+const getErrorMessage = (error: unknown) => {
+  const code = getAuthErrorCode(error);
+  const mapped: Record<string, string> = {
+    "auth/network-request-failed":
+      "Unable to connect to login service. Please check your internet connection and try again.",
+    "auth/configuration-not-found":
+      "Authentication is not configured correctly. Please contact support.",
+    "auth/invalid-api-key":
+      "There is a problem with the login system configuration. Please refresh the page or try again later.",
+    "auth/app-deleted":
+      "Authentication service is unavailable at the moment. Please try again later.",
+    "auth/unauthorized-domain":
+      "This website is not authorized for login. Please use the official Hydrosentinel site.",
+    "auth/user-not-found":
+      "No account was found for that email. Please check your email or sign up.",
+    "auth/wrong-password":
+      "Incorrect password. Please try again or reset your password.",
+    "auth/invalid-email":
+      "Please enter a valid email address.",
+    "auth/too-many-requests":
+      "Too many login attempts. Please wait a few minutes and try again.",
+    "auth/user-disabled":
+      "This account has been disabled. If you think this is a mistake, contact support.",
+    "auth/email-already-in-use":
+      "An account already exists with this email address.",
+    "auth/weak-password":
+      "Please choose a stronger password with at least 6 characters.",
+    "auth/operation-not-allowed":
+      "Email/password sign-in is currently disabled for this project.",
+    "auth/invalid-credential":
+      "The email or password is incorrect.",
+    "permission-denied":
+      "Your account was created, but Firebase denied the profile write. Please contact support or check Firestore rules.",
+    "unavailable":
+      "Firebase is temporarily unavailable. Please try again shortly.",
+    "failed-precondition":
+      "Firebase is not ready to save this account yet. Please try again.",
+    "deadline-exceeded":
+      "Firebase timed out while saving this account. Please try again.",
+    "resource-exhausted":
+      "Firebase quota was exceeded while saving this account. Please try again later.",
+    "aborted":
+      "Firebase cancelled the account save. Please try again.",
+  };
+
+  if (mapped[code]) {
+    return mapped[code];
+  }
+
+  if (error instanceof Error) {
+    if (error.message.includes("Firebase Auth is temporarily unavailable")) {
+      return "Login service is temporarily unavailable. Try again when you are online, or use a cached local account if available.";
+    }
+
+    return error.message;
+  }
+
+  return "Authentication failed. Please try again.";
+};
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -309,7 +383,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
       for (const item of pendingSignups) {
         try {
-          const credential = await createUserWithEmailAndPassword(auth, item.email, item.password);
+          const credential = item.authUid
+            ? { user: { uid: item.authUid, email: item.email } }
+            : await createUserWithEmailAndPassword(auth, item.email, item.password);
           const nextRole = item.selectedRole;
           const orgForSystem =
             item.organizationName && item.organizationName.trim().length > 0
@@ -344,6 +420,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
           removePendingSignup(item.email);
         } catch (error) {
+          if (getAuthErrorCode(error) === "auth/email-already-in-use" && !item.authUid) {
+            try {
+              const recovered = await signInWithEmailAndPassword(auth, item.email, item.password);
+              const nextRole = item.selectedRole;
+              const orgForSystem =
+                item.organizationName && item.organizationName.trim().length > 0
+                  ? item.organizationName
+                  : item.organizationType;
+              const systemId = generateSystemId(orgForSystem ?? "ORG", item.username);
+
+              await persistUserDoc(recovered.user.uid, item.email, nextRole, item.recoveryCode.trim(), {
+                fullName: item.fullName,
+                username: normalizeUsername(item.username),
+                organizationType: item.organizationType,
+                organizationName: item.organizationName ?? null,
+                systemId,
+              });
+
+              updateLocalAccount({
+                uid: recovered.user.uid,
+                email: item.email,
+                password: item.password,
+                role: nextRole,
+                resetCode: item.recoveryCode.trim(),
+                fullName: item.fullName,
+                username: normalizeUsername(item.username),
+                organization: item.organizationName ?? item.organizationType,
+                systemId,
+              });
+
+              if (readSession()?.user.email?.toLowerCase() === normalizeEmail(item.email)) {
+                setAuthState({ uid: recovered.user.uid, email: recovered.user.email, provider: "firebase" }, nextRole);
+              }
+
+              removePendingSignup(item.email);
+              continue;
+            } catch (retryError) {
+              console.warn("Pending signup recovery failed:", retryError);
+            }
+          }
+
           console.warn("Pending signup sync failed:", error);
           remaining.push(item);
         }
@@ -365,20 +482,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       }
 
       const firestoreUserRef = doc(db, "users", firebaseUser.uid);
-      const userDoc = await getDoc(firestoreUserRef);
-      console.log("Firestore user:", userDoc.data());
+      try {
+        const userDoc = await getDoc(firestoreUserRef);
+        console.log("Firestore user:", userDoc.data());
 
-      if (!userDoc.exists()) {
-        await persistUserDoc(firebaseUser.uid, firebaseUser.email, "user");
-      } else {
-        await setDoc(
-          firestoreUserRef,
-          {
-            email: normalizeEmail(firebaseUser.email ?? userDoc.data()?.email ?? ""),
-            lastLoginAt: serverTimestamp(),
-          },
-          { merge: true },
-        );
+        if (!userDoc.exists()) {
+          await persistUserDoc(firebaseUser.uid, firebaseUser.email, "user");
+        } else {
+          await setDoc(
+            firestoreUserRef,
+            {
+              email: normalizeEmail(firebaseUser.email ?? userDoc.data()?.email ?? ""),
+              lastLoginAt: serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
+      } catch (error) {
+        console.warn("Firestore profile refresh failed:", error);
       }
 
       const refreshedDoc = await getDoc(firestoreUserRef);
@@ -396,10 +517,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     });
 
     const handleOnline = () => {
+      console.log("[Auth] Connection restored, flushing pending signups");
       void flushPendingSignups();
     };
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible" && isBrowserOnline()) {
+        console.log("[Auth] App became visible, flushing pending signups");
+        void flushPendingSignups();
+      }
+    };
+
     window.addEventListener("online", handleOnline);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     void flushPendingSignups();
     if (!session) {
       setLoading(false);
@@ -408,6 +538,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     return () => {
       unsubscribe();
       window.removeEventListener("online", handleOnline);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
 
@@ -541,21 +672,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     const normalizedEmail = normalizeEmail(email);
 
     if (!isBrowserOnline()) {
-      const pending: PendingSignup = {
-        email: normalizedEmail,
-        password,
-        fullName: "",
-        username: normalizedEmail.split("@")[0] || "user",
-        organizationType: "",
-        organizationName: undefined,
-        recoveryCode: resetCode.trim(),
+      const localUid = crypto.randomUUID();
+      const pending = buildPendingSignup(
+        {
+          email: normalizedEmail,
+          password,
+          fullName: "",
+          username: normalizedEmail.split("@")[0] || "user",
+          organizationType: "",
+          organizationName: undefined,
+          recoveryCode: resetCode.trim(),
+        },
         selectedRole,
-        queuedAt: new Date().toISOString(),
-      };
+        localUid,
+      );
       queuePendingSignup(pending);
 
       const nextAccount: LocalAccount = {
-        uid: crypto.randomUUID(),
+        uid: localUid,
         email: normalizedEmail,
         password,
         role: selectedRole,
@@ -571,7 +705,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
     try {
       const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
-      await persistUserDoc(credential.user.uid, normalizedEmail, selectedRole, resetCode.trim());
+      try {
+        await persistUserDoc(credential.user.uid, normalizedEmail, selectedRole, resetCode.trim());
+      } catch (error) {
+        if (isRetryableSyncError(error)) {
+          const pending = buildPendingSignup(
+            {
+              email: normalizedEmail,
+              password,
+              fullName: "",
+              username: normalizedEmail.split("@")[0] || "user",
+              organizationType: "",
+              organizationName: undefined,
+              recoveryCode: resetCode.trim(),
+            },
+            selectedRole,
+            credential.user.uid,
+            credential.user.uid,
+          );
+          queuePendingSignup(pending);
+
+          const nextAccount: LocalAccount = {
+            uid: credential.user.uid,
+            email: normalizedEmail,
+            password,
+            role: selectedRole,
+            resetCode: resetCode.trim(),
+          };
+          updateLocalAccount(nextAccount);
+          persistLocalSession(
+            { uid: nextAccount.uid, email: nextAccount.email, provider: "firebase" },
+            selectedRole,
+          );
+          return;
+        }
+
+        await signOut(auth);
+        throw new Error(getErrorMessage(error));
+      }
+
       updateLocalAccount({
         uid: credential.user.uid,
         email: normalizedEmail,
@@ -585,20 +757,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       );
     } catch (error) {
       if (isTransientAuthError(error)) {
-        const pending: PendingSignup = {
-          email: normalizedEmail,
-          password,
-          fullName: "",
-          username: normalizedEmail.split("@")[0] || "user",
-          organizationType: "",
-          organizationName: undefined,
-          recoveryCode: resetCode.trim(),
+        const localUid = crypto.randomUUID();
+        const pending = buildPendingSignup(
+          {
+            email: normalizedEmail,
+            password,
+            fullName: "",
+            username: normalizedEmail.split("@")[0] || "user",
+            organizationType: "",
+            organizationName: undefined,
+            recoveryCode: resetCode.trim(),
+          },
           selectedRole,
-          queuedAt: new Date().toISOString(),
-        };
+          localUid,
+        );
         queuePendingSignup(pending);
         const nextAccount: LocalAccount = {
-          uid: crypto.randomUUID(),
+          uid: localUid,
           email: normalizedEmail,
           password,
           role: selectedRole,
@@ -636,20 +811,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     const normalizedEmail = normalizeEmail(email);
 
     const createLocalPendingSignup = async () => {
-      const pending: PendingSignup = {
-        email: normalizedEmail,
-        password,
-        fullName,
-        username: normalizedUsername,
-        organizationType,
-        organizationName,
-        recoveryCode,
-        selectedRole: "user",
-        queuedAt: new Date().toISOString(),
-      };
-      queuePendingSignup(pending);
-
       const localUid = crypto.randomUUID();
+      const pending = buildPendingSignup(
+        {
+          email: normalizedEmail,
+          password,
+          fullName,
+          username: normalizedUsername,
+          organizationType,
+          organizationName,
+          recoveryCode,
+        },
+        "user",
+        localUid,
+      );
+      queuePendingSignup(pending);
       updateLocalAccount({
         uid: localUid,
         email: normalizedEmail,
@@ -662,7 +838,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         systemId,
       });
       persistLocalSession({ uid: localUid, email: normalizedEmail, provider: "local" }, "user");
-      return { uid: localUid, systemId };
+      return { uid: localUid, systemId, syncStatus: "pending" as const };
     };
 
     if (!isBrowserOnline()) {
@@ -673,13 +849,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       const userCred = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
       const uid = userCred.user.uid;
 
-      await persistUserDoc(uid, normalizedEmail, "user", recoveryCode.trim(), {
-        fullName,
-        username: normalizedUsername,
-        organizationType,
-        organizationName: organizationName ?? null,
-        systemId,
-      });
+      try {
+        await persistUserDoc(uid, normalizedEmail, "user", recoveryCode.trim(), {
+          fullName,
+          username: normalizedUsername,
+          organizationType,
+          organizationName: organizationName ?? null,
+          systemId,
+        });
+      } catch (error) {
+        if (isRetryableSyncError(error)) {
+          const pending = buildPendingSignup(
+            {
+              email: normalizedEmail,
+              password,
+              fullName,
+              username: normalizedUsername,
+              organizationType,
+              organizationName,
+              recoveryCode,
+            },
+            "user",
+            uid,
+            uid,
+          );
+          queuePendingSignup(pending);
+
+          updateLocalAccount({
+            uid,
+            email: normalizedEmail,
+            password,
+            role: "user",
+            resetCode: recoveryCode.trim(),
+            fullName,
+            username: normalizedUsername,
+            organization: organizationName ?? organizationType,
+            systemId,
+          });
+          setAuthState({ uid, email: normalizedEmail, provider: "firebase" }, "user");
+          return { uid, systemId, syncStatus: "pending" as const };
+        }
+
+        await signOut(auth);
+        throw new Error(getErrorMessage(error));
+      }
 
       updateLocalAccount({
         uid,
@@ -695,7 +908,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
       setAuthState({ uid, email: normalizedEmail, provider: "firebase" }, "user");
 
-      return { uid, systemId };
+      return { uid, systemId, syncStatus: "synced" as const };
     } catch (error) {
       if (isTransientAuthError(error)) {
         return createLocalPendingSignup();
@@ -705,7 +918,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       throw new Error(msg);
     }
   };
-
   const resetPasswordWithRecoveryCode = async (
     email: string,
     password: string,
@@ -780,7 +992,7 @@ export const useAuth = () => {
 };
 
 // Export for SyncMonitor to read pending signups
-export const getPendingSignups = (): Array<SignupData & { selectedRole: UserRole; queuedAt: string }> => {
+export const getPendingSignups = (): Array<SignupData & { selectedRole: UserRole; queuedAt: string; authUid?: string }> => {
   try {
     if (typeof window === "undefined") return [];
     const raw = window.localStorage.getItem("hydrosentinel.pendingSignups");
@@ -788,6 +1000,81 @@ export const getPendingSignups = (): Array<SignupData & { selectedRole: UserRole
   } catch {
     return [];
   }
+};
+
+export const triggerPendingSignupSync = async () => {
+  if (typeof window === "undefined") return;
+  
+  if (!isBrowserOnline()) {
+    console.warn("[Sync] Cannot sync pending signups: offline");
+    return;
+  }
+
+  const pendingSignups = readPendingSignups();
+  if (pendingSignups.length === 0) {
+    console.log("[Sync] No pending signups to sync");
+    return;
+  }
+
+  console.log(`[Sync] Attempting to sync ${pendingSignups.length} pending signups`);
+  const remaining: PendingSignup[] = [];
+
+  for (const item of pendingSignups) {
+    try {
+      const credential = item.authUid
+        ? { user: { uid: item.authUid, email: item.email } }
+        : await createUserWithEmailAndPassword(auth, item.email, item.password);
+      const nextRole = item.selectedRole;
+      const orgForSystem =
+        item.organizationName && item.organizationName.trim().length > 0
+          ? item.organizationName
+          : item.organizationType;
+      const systemId = generateSystemId(orgForSystem ?? "ORG", item.username);
+
+      await persistUserDoc(credential.user.uid, item.email, nextRole, item.recoveryCode.trim(), {
+        fullName: item.fullName,
+        username: normalizeUsername(item.username),
+        organizationType: item.organizationType,
+        organizationName: item.organizationName ?? null,
+        systemId,
+      });
+
+      console.log(`[Sync] Successfully synced signup for ${item.email}`);
+      removePendingSignup(item.email);
+    } catch (error) {
+      if (getAuthErrorCode(error) === "auth/email-already-in-use" && !item.authUid) {
+        try {
+          const recovered = await signInWithEmailAndPassword(auth, item.email, item.password);
+          const nextRole = item.selectedRole;
+          const orgForSystem =
+            item.organizationName && item.organizationName.trim().length > 0
+              ? item.organizationName
+              : item.organizationType;
+          const systemId = generateSystemId(orgForSystem ?? "ORG", item.username);
+
+          await persistUserDoc(recovered.user.uid, item.email, nextRole, item.recoveryCode.trim(), {
+            fullName: item.fullName,
+            username: normalizeUsername(item.username),
+            organizationType: item.organizationType,
+            organizationName: item.organizationName ?? null,
+            systemId,
+          });
+
+          console.log(`[Sync] Recovered and synced signup for ${item.email}`);
+          removePendingSignup(item.email);
+          continue;
+        } catch (retryError) {
+          console.warn(`[Sync] Failed to recover signup for ${item.email}:`, retryError);
+        }
+      }
+
+      console.warn(`[Sync] Failed to sync signup for ${item.email}:`, error);
+      remaining.push(item);
+    }
+  }
+
+  savePendingSignups(remaining);
+  console.log(`[Sync] Completed with ${remaining.length} failures`);
 };
 
 export type { SignupData };

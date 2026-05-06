@@ -10,11 +10,14 @@ import { WaterGraph } from "@/components/WaterGraph";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import {
   collection,
+  collectionGroup,
   deleteDoc,
   doc,
   getDocs,
   onSnapshot,
+  query,
   setDoc,
+  where,
 } from "firebase/firestore";
 import { db } from "@/firebase";
 import {
@@ -44,8 +47,12 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import {
   DeviceRecord,
   DeviceReading,
+  appendLocalDeviceReading,
   getLocalDeviceHistory,
+  getLocalDevicesByOwner,
   removeLocalDevice,
+  readLocalDevices,
+  upsertLocalDevice,
 } from "@/lib/deviceStore";
 
 type UserRole = "user" | "admin";
@@ -91,6 +98,8 @@ type DeviceEditForm = {
   createdAt: string;
 };
 
+const DEMO_USERS: UserSummary[] = [];
+
 const LOCAL_ACCOUNTS_KEY = "hydrosentinel.localAccounts";
 
 const DEMO_ACCOUNT_EMAILS = new Set(["user@demo.com", "admin@demo.com"]);
@@ -100,6 +109,12 @@ const formatDate = (value?: string) => {
 
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+};
+
+const mergeById = <T extends { id: string }>(primary: T[], fallback: T[]) => {
+  const merged = new Map<string, T>();
+  [...fallback, ...primary].forEach((entry) => merged.set(entry.id, entry));
+  return Array.from(merged.values());
 };
 
 const parseList = (value: string) =>
@@ -161,7 +176,38 @@ const deleteLocalAccount = (userId: string) => {
   }
 };
 
-const normalizeEmail = (value?: string) => (value ?? "").trim().toLowerCase();
+const readLocalUsers = (): UserSummary[] => {
+  if (typeof window === "undefined") {
+    return DEMO_USERS;
+  }
+
+  try {
+    const rawAccounts = window.localStorage.getItem(LOCAL_ACCOUNTS_KEY);
+    if (!rawAccounts) {
+      return DEMO_USERS;
+    }
+
+    const parsed = JSON.parse(rawAccounts) as Array<{
+      uid: string;
+      email: string;
+      role: UserRole;
+      deviceCount?: number;
+    }>;
+
+    const localMapped: UserSummary[] = parsed.map((item) => ({
+      id: item.uid,
+      email: item.email,
+      role: item.role,
+      deviceCount: item.deviceCount,
+    }));
+
+    const unique = new Map<string, UserSummary>();
+    [...DEMO_USERS, ...localMapped].forEach((entry) => unique.set(entry.id, entry));
+    return Array.from(unique.values());
+  } catch {
+    return DEMO_USERS;
+  }
+};
 
 export const AdminPanel = () => {
   const { user, role, logout } = useAuth();
@@ -169,9 +215,9 @@ export const AdminPanel = () => {
 
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState<UserSummary[]>([]);
+  const [rootDevices, setRootDevices] = useState<DeviceRecord[]>([]);
+  const [nestedDevices, setNestedDevices] = useState<DeviceRecord[]>([]);
   const [devices, setDevices] = useState<DeviceRecord[]>([]);
-  const [firestoreDeviceCount, setFirestoreDeviceCount] = useState(0);
-  const [liveSyncHealthy, setLiveSyncHealthy] = useState(true);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [selectedHistory, setSelectedHistory] = useState<DeviceReading[]>([]);
@@ -216,15 +262,10 @@ export const AdminPanel = () => {
   }, [role, loading, navigate]);
 
   useEffect(() => {
-    if (!user) {
-      navigate("/login");
-      return;
-    }
-
     const unsubscribeUsers = onSnapshot(
       collection(db, "users"),
-      async (usersSnap) => {
-        const remoteUsersRaw: UserSummary[] = usersSnap.docs.map((item) => {
+      (usersSnap) => {
+        const remoteUsers: UserSummary[] = usersSnap.docs.map((item) => {
           const data = item.data() as {
             email?: string;
             role?: UserRole;
@@ -242,7 +283,7 @@ export const AdminPanel = () => {
 
           return {
             id: item.id,
-            email: normalizeEmail(data.email) || "unknown@user",
+            email: data.email ?? "unknown@user",
             role: data.role ?? "user",
             deviceCount: data.deviceCount ?? 0,
             name: data.name,
@@ -257,115 +298,80 @@ export const AdminPanel = () => {
           };
         });
 
-        const uniqueById = new Map<string, UserSummary>();
-        const seenEmails = new Map<string, string>();
-        const duplicateEmailDocIds: string[] = [];
+        console.debug("[AdminPanel] remote users snapshot", {
+          count: remoteUsers.length,
+          userIds: remoteUsers.map((u) => u.id).slice(0, 20),
+        });
 
-        for (const entry of remoteUsersRaw) {
-          if (uniqueById.has(entry.id)) {
-            continue;
-          }
-
-          const normalized = normalizeEmail(entry.email);
-          if (normalized && seenEmails.has(normalized)) {
-            duplicateEmailDocIds.push(entry.id);
-            continue;
-          }
-
-          if (normalized) {
-            seenEmails.set(normalized, entry.id);
-          }
-
-          uniqueById.set(entry.id, entry);
-        }
-
-        const uniqueUsers = Array.from(uniqueById.values());
-
-        // Debug fetched users and duplication patterns for admin troubleshooting.
-        console.groupCollapsed("[AdminPanel] users snapshot");
-        console.log("totalDocs", usersSnap.size);
-        console.log("uniqueUsers", uniqueUsers.length);
-        console.table(
-          remoteUsersRaw.map((entry) => ({
-            id: entry.id,
-            email: entry.email,
-            role: entry.role,
-          }))
+        setUsers(remoteUsers);
+        setSelectedUserId((prev) =>
+          prev ?? remoteUsers.find((u) => u.role === "user")?.id ?? remoteUsers[0]?.id ?? null
         );
-        if (duplicateEmailDocIds.length > 0) {
-          console.warn("Duplicate email docs detected", duplicateEmailDocIds);
-        }
-        console.groupEnd();
-
-        // Cleanup pass: remove duplicate docs by email, keeping first seen entry.
-        if (duplicateEmailDocIds.length > 0) {
-          try {
-            await Promise.all(
-              duplicateEmailDocIds.map((docId) =>
-                deleteDoc(doc(db, "users", docId))
-              )
-            );
-          } catch (cleanupError) {
-            console.error("Failed to cleanup duplicate user docs:", cleanupError);
-          }
-        }
-
-        setUsers(uniqueUsers);
-        setSelectedUserId((prev) => prev ?? uniqueUsers.find((u) => u.role === "user")?.id ?? null);
         setLoading(false);
       },
       (error) => {
         console.error("Error loading admin users:", error);
-        setUsers([]);
-        setSelectedUserId(null);
+        const fallbackUsers = readLocalUsers();
+        setUsers(fallbackUsers);
+        setSelectedUserId((prev) =>
+          prev ?? fallbackUsers.find((u) => u.role === "user")?.id ?? fallbackUsers[0]?.id ?? null
+        );
         setLoading(false);
       }
     );
 
-    const unsubscribeDevices = onSnapshot(
+    const unsubscribeRootDevices = onSnapshot(
       collection(db, "devices"),
       (devicesSnap) => {
-        console.groupCollapsed("[AdminPanel] devices snapshot");
-        console.log("snapshotSize", devicesSnap.size);
-        const remoteRaw = devicesSnap.docs.map((item) => ({
+        const rootDeviceList: DeviceRecord[] = devicesSnap.docs.map((item) => ({
           id: item.id,
           ...(item.data() as Omit<DeviceRecord, "id">),
         }));
 
-        // Ensure unique devices by id (defensive)
-        const unique = new Map<string, DeviceRecord>();
-        const duplicateIds: string[] = [];
-        for (const d of remoteRaw) {
-          if (unique.has(d.id)) {
-            duplicateIds.push(d.id);
-            continue;
-          }
-          unique.set(d.id, d);
-        }
+        console.debug("[AdminPanel] root devices snapshot", {
+          count: rootDeviceList.length,
+          sample: rootDeviceList.slice(0, 10).map((device) => ({ id: device.id, ownerUid: device.ownerUid })),
+        });
 
-        const remoteDevices = Array.from(unique.values());
-        console.log("remoteDevicesCount", remoteDevices.length, "duplicates", duplicateIds);
-
-        setFirestoreDeviceCount(devicesSnap.size);
-        setDevices(remoteDevices);
-        setLiveSyncHealthy(true);
+        setRootDevices(rootDeviceList);
         setLoading(false);
-        console.groupEnd();
       },
       (error) => {
-        console.error("Error loading admin devices:", error);
-        setDevices([]);
-        setFirestoreDeviceCount(0);
-        setLiveSyncHealthy(false);
+        console.error("Error loading root admin devices:", error);
+        setRootDevices(readLocalDevices());
+        setLoading(false);
+      }
+    );
+
+    const unsubscribeNestedDevices = onSnapshot(
+      collectionGroup(db, "devices"),
+      (devicesSnap) => {
+        const nestedDeviceList: DeviceRecord[] = devicesSnap.docs.map((item) => ({
+          id: item.id,
+          ...(item.data() as Omit<DeviceRecord, "id">),
+        }));
+
+        console.debug("[AdminPanel] nested devices snapshot", {
+          count: nestedDeviceList.length,
+          sample: nestedDeviceList.slice(0, 10).map((device) => ({ id: device.id, ownerUid: device.ownerUid })),
+        });
+
+        setNestedDevices(nestedDeviceList);
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Error loading nested admin devices:", error);
+        setNestedDevices([]);
         setLoading(false);
       }
     );
 
     return () => {
       unsubscribeUsers();
-      unsubscribeDevices();
+      unsubscribeRootDevices();
+      unsubscribeNestedDevices();
     };
-  }, [navigate, user]);
+  }, []);
 
   const selectedUser = users.find((entry) => entry.id === selectedUserId) ?? null;
   const selectedUserDetails = useMemo(() => {
@@ -387,6 +393,10 @@ export const AdminPanel = () => {
       { label: "Recovery Code", value: selectedUser.resetCode ?? "-" },
     ];
   }, [selectedUser]);
+  useEffect(() => {
+    setDevices(mergeById(rootDevices, nestedDevices));
+  }, [rootDevices, nestedDevices]);
+
   const selectedUserDevices = useMemo(
     () => devices.filter((device) => device.ownerUid === selectedUserId),
     [devices, selectedUserId]
@@ -396,6 +406,18 @@ export const AdminPanel = () => {
     () => selectedUserDevices.find((device) => device.id === selectedDeviceId) ?? null,
     [selectedDeviceId, selectedUserDevices]
   );
+
+  useEffect(() => {
+    if (!selectedUserId) {
+      return;
+    }
+
+    console.debug("[AdminPanel] selected user device mapping", {
+      selectedUserId,
+      matchedCount: selectedUserDevices.length,
+      sample: selectedUserDevices.slice(0, 10).map((device) => ({ id: device.id, ownerUid: device.ownerUid })),
+    });
+  }, [selectedUserDevices, selectedUserId]);
 
   useEffect(() => {
     if (!selectedUser) {
@@ -444,43 +466,41 @@ export const AdminPanel = () => {
       return;
     }
 
-    const loadHistory = async () => {
-      try {
-        const snapshot = await getDocs(
-          collection(db, "users", selectedUserId ?? "", "devices", selectedDevice.id, "readings")
-        );
+    const readingsRef = collection(db, "users", selectedDevice.ownerUid, "devices", selectedDevice.id, "readings");
+    const unsubscribeReadings = onSnapshot(
+      readingsRef,
+      (snapshot) => {
+        const readings = snapshot.docs.map((item) => item.data() as DeviceReading);
+        console.debug("[AdminPanel] selected device history snapshot", {
+          deviceId: selectedDevice.id,
+          ownerUid: selectedDevice.ownerUid,
+          count: readings.length,
+        });
 
-        if (snapshot.size > 0) {
-          setSelectedHistory(snapshot.docs.map((item) => item.data() as DeviceReading));
+        if (readings.length > 0) {
+          setSelectedHistory(readings);
           return;
         }
-      } catch {
-        // Fall through to local cache.
+
+        setSelectedHistory(getLocalDeviceHistory(selectedDevice.id));
+      },
+      (error) => {
+        console.error("Error loading selected device history:", error);
+        setSelectedHistory(getLocalDeviceHistory(selectedDevice.id));
       }
+    );
 
-      setSelectedHistory(getLocalDeviceHistory(selectedDevice.id));
-    };
-
-    void loadHistory();
-  }, [selectedDevice, selectedUserId]);
+    return () => unsubscribeReadings();
+  }, [selectedDevice]);
 
   const usersWithDeviceCount = useMemo(
     () =>
-      users
-        .filter((entry) => entry.role === "user")
-        .map((entry) => ({
-          ...entry,
-          deviceCount: devices.filter((device) => device.ownerUid === entry.id).length,
-        })),
+      users.map((entry) => ({
+        ...entry,
+        deviceCount: devices.filter((device) => device.ownerUid === entry.id).length,
+      })),
     [devices, users]
   );
-
-  const totalUniqueUsers = usersWithDeviceCount.length;
-  const connectedDeviceCount = useMemo(
-    () => devices.filter((device) => device.status === "active").length,
-    [devices],
-  );
-  const mismatchDetected = firestoreDeviceCount !== devices.length;
 
   const filteredReadingsByDevice = useMemo(() => {
     const query = readingSearch.trim().toLowerCase();
@@ -656,10 +676,14 @@ export const AdminPanel = () => {
 
       await Promise.all([
         setDoc(doc(db, "devices", selectedDevice.id), payload, { merge: true }),
-        setDoc(doc(db, "users", selectedUser.id, "devices", selectedDevice.id), payload, {
+        setDoc(doc(db, "users", selectedDevice.ownerUid, "devices", selectedDevice.id), payload, {
           merge: true,
         }),
       ]);
+
+      const updated = { id: selectedDevice.id, ...payload };
+      upsertLocalDevice(updated);
+      setDevices((prev) => prev.map((entry) => (entry.id === updated.id ? updated : entry)));
       setIsDeviceEditOpen(false);
     } catch (error) {
       console.error("Failed to save device changes:", error);
@@ -676,16 +700,17 @@ export const AdminPanel = () => {
     setActionLoading(true);
     try {
       const readingsSnapshot = await getDocs(
-        collection(db, "users", selectedUser.id, "devices", device.id, "readings")
+        collection(db, "users", device.ownerUid, "devices", device.id, "readings")
       );
 
       await Promise.all(readingsSnapshot.docs.map((reading) => deleteDoc(reading.ref)));
       await Promise.all([
-        deleteDoc(doc(db, "users", selectedUser.id, "devices", device.id)),
+        deleteDoc(doc(db, "users", device.ownerUid, "devices", device.id)),
         deleteDoc(doc(db, "devices", device.id)),
       ]);
 
       removeLocalDevice(device.id);
+      setDevices((prev) => prev.filter((entry) => entry.id !== device.id));
       if (selectedDeviceId === device.id) {
         setSelectedDeviceId(null);
       }
@@ -696,47 +721,64 @@ export const AdminPanel = () => {
     }
   };
 
-  const getReadingsForExport = async () => {
-    const entries = await Promise.all(
-      selectedUserDevices.map(async (device) => {
-        try {
-          const snapshot = await getDocs(
-            collection(db, "users", selectedUserId ?? "", "devices", device.id, "readings")
-          );
-
-          if (snapshot.size > 0) {
-            const readings = snapshot.docs
-              .map((item) => item.data() as DeviceReading)
-              .sort(
-                (a, b) =>
-                  new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-              )
-              .slice(-10);
-
-            return [device.id, readings] as const;
-          }
-        } catch {
-          // Use local fallback below.
-        }
-
-        return [device.id, getLocalDeviceHistory(device.id).slice(-10)] as const;
-      })
-    );
-
-    return Object.fromEntries(entries);
-  };
-
-  const handleOpenData = async () => {
+  const handleOpenData = () => {
     if (!selectedUser) {
       return;
     }
 
-    setDataLoading(true);
-    const readingsByDevice = await getReadingsForExport();
-    setDataReadingsByDevice(readingsByDevice);
+    console.debug("[AdminPanel] opening data panel for user", {
+      selectedUserId,
+      selectedUserEmail: selectedUser.email,
+      selectedDeviceCount: selectedUserDevices.length,
+    });
+
+    setDataReadingsByDevice({});
     setShowDataPanel(true);
-    setDataLoading(false);
+    setDataLoading(true);
   };
+
+  useEffect(() => {
+    if (!showDataPanel || !selectedUser || selectedUserDevices.length === 0) {
+      return;
+    }
+
+    setDataReadingsByDevice({});
+    const unsubscribes = selectedUserDevices.map((device) => {
+      const readingsRef = collection(db, "users", device.ownerUid, "devices", device.id, "readings");
+      return onSnapshot(
+        readingsRef,
+        (snapshot) => {
+          const readings = snapshot.docs.map((item) => item.data() as DeviceReading);
+          console.debug("[AdminPanel] realtime data panel reading update", {
+            deviceId: device.id,
+            ownerUid: device.ownerUid,
+            count: readings.length,
+          });
+
+          setDataReadingsByDevice((prev) => ({
+            ...prev,
+            [device.id]: readings.length > 0 ? readings : getLocalDeviceHistory(device.id).slice(-10),
+          }));
+          setDataLoading(false);
+        },
+        (error) => {
+          console.error("Error loading data panel readings:", error, {
+            deviceId: device.id,
+            ownerUid: device.ownerUid,
+          });
+          setDataReadingsByDevice((prev) => ({
+            ...prev,
+            [device.id]: getLocalDeviceHistory(device.id).slice(-10),
+          }));
+          setDataLoading(false);
+        }
+      );
+    });
+
+    return () => {
+      unsubscribes.forEach((unsubscribe) => unsubscribe());
+    };
+  }, [showDataPanel, selectedUser, selectedUserDevices]);
 
   const latestReading = selectedHistory.length ? selectedHistory[selectedHistory.length - 1] : null;
   const tdsData = selectedHistory.map((item, index) => ({
@@ -783,13 +825,13 @@ export const AdminPanel = () => {
         >
           <div className="premium-card p-5">
             <p className="text-xs uppercase tracking-[0.24em] text-slate-600 mb-3">Users</p>
-            <h3 className="text-3xl font-black text-slate-950 dark:text-white">{totalUniqueUsers}</h3>
+            <h3 className="text-3xl font-black text-slate-950 dark:text-white">{usersWithDeviceCount.length}</h3>
             <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Total accounts monitored</p>
           </div>
           <div className="premium-card p-5">
             <p className="text-xs uppercase tracking-[0.24em] text-slate-600 mb-3">Connected Devices</p>
-            <h3 className="text-3xl font-black text-slate-950 dark:text-white">{connectedDeviceCount}</h3>
-            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Active devices from Firestore</p>
+            <h3 className="text-3xl font-black text-slate-950 dark:text-white">{devices.length}</h3>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Active devices across all users</p>
           </div>
           <div className="premium-card p-5">
             <p className="text-xs uppercase tracking-[0.24em] text-slate-600 mb-3">Selected User</p>
@@ -798,25 +840,10 @@ export const AdminPanel = () => {
           </div>
           <div className="premium-card p-5">
             <p className="text-xs uppercase tracking-[0.24em] text-slate-600 mb-3">Device View</p>
-            <h3 className="text-3xl font-black text-slate-950 dark:text-white">{firestoreDeviceCount}</h3>
-            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Total devices in Firestore</p>
+            <h3 className="text-3xl font-black text-slate-950 dark:text-white">{selectedUserDevices.length}</h3>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Devices owned by selected user</p>
           </div>
         </motion.div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${
-            liveSyncHealthy
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
-              : "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-300"
-          }`}>
-            {liveSyncHealthy ? "Live Synced with Firestore" : "Sync issue detected"}
-          </span>
-          {mismatchDetected ? (
-            <span className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-700 dark:text-amber-300">
-              UI/Firestore mismatch detected (UI {devices.length} vs Firestore {firestoreDeviceCount})
-            </span>
-          ) : null}
-        </div>
 
         <div className="grid lg:grid-cols-[340px_1fr] gap-6">
           <motion.section
@@ -1149,8 +1176,8 @@ export const AdminPanel = () => {
                         </div>
 
                         <div className="grid gap-4 lg:grid-cols-2">
-                          <WaterGraph data={tdsData} type="tds" title="TDS Levels" color="hsl(var(--chart-1))" unit="ppm" />
-                          <WaterGraph data={phTurbidityData} type="ph" title="pH & Turbidity" color="hsl(var(--chart-2))" unit="pH" />
+                          <WaterGraph data={tdsData} type="tds" />
+                          <WaterGraph data={phTurbidityData} type="ph" />
                         </div>
                       </div>
                     )}

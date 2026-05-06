@@ -157,8 +157,15 @@ export const Login = () => {
             recoveryCode,
           };
 
-          const { uid, systemId } = await signupWithProfile(payload as any);
-          toast({ title: "Account created", description: `Welcome ${fullName}` });
+          const { syncStatus } = await signupWithProfile(payload as any);
+          if (syncStatus === "pending") {
+            toast({
+              title: "Account created locally",
+              description: "Firebase sync is pending right now. We will retry automatically when the connection stabilizes.",
+            });
+          } else {
+            toast({ title: "Account created", description: `Welcome ${fullName}` });
+          }
         } catch (err) {
           const msg = err instanceof Error ? err.message : "Signup failed";
           setError(msg === "Username already taken" ? "Username already taken" : msg);
@@ -632,10 +639,13 @@ export const Login = () => {
                     initial={{ opacity: 0, y: -8 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -8 }}
-                    className="flex items-start gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200"
+                    className="flex flex-col gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200"
                     role="alert"
                   >
-                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div className="flex items-center gap-2 font-semibold">
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                      <span>Account issue</span>
+                    </div>
                     <p>{error}</p>
                   </motion.div>
                 )}
