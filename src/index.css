@@ -20,23 +20,26 @@
     --muted-foreground: 184 5% 55%;
     --accent: 239 84% 67%;
     --accent-foreground: 0 0% 100%;
-    --border: 0 0% 90%;
+    --border: 205 45% 92%;
     --ring: 239 84% 67%;
     --radius: 0.5rem;
     --font-display: 'Instrument Serif', serif;
     --font-body: 'Inter', sans-serif;
-    --shadow-dashboard: 0 25px 80px -12px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0,0,0,0.06);
-    --card: 0 0% 100%;
-    --card-foreground: 210 14% 17%;
-    --input: 0 0% 97%;
-    --sidebar-background: 0 0% 98%;
+    --shadow-dashboard: 0 20px 60px -15px rgba(0, 150, 200, 0.08), 0 8px 16px -8px rgba(0, 150, 200, 0.06);
+    /* Light-mode card: subtle cyan-tinted paper for depth and premium feel */
+    --card: 193 60% 96%;
+    --card-foreground: 205 20% 14%;
+    /* Soft cyan glow used for premium cards in light mode */
+    --shadow-card: 0 30px 80px -30px rgba(6,182,212,0.08), 0 8px 20px rgba(6,182,212,0.04);
+    --input: 205 40% 93%;
+    --sidebar-background: 205 50% 96%;
     --sidebar-foreground: 210 14% 17%;
     --sidebar-primary: 239 84% 67%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-border: 0 0% 90%;
-    --shadow-neu: 0 4px 6px rgba(0,0,0,0.07), 0 1px 3px rgba(0,0,0,0.06);
-    --shadow-neu-inset: inset 0 1px 0 rgba(255,255,255,1);
-    --background-gradient-light: linear-gradient(135deg, #ffffff, #f5f5f5, #ffffff);
+    --sidebar-border: 205 45% 90%;
+    --shadow-neu: 0 8px 16px rgba(0, 150, 200, 0.08), 0 2px 4px rgba(0, 150, 200, 0.06);
+    --shadow-neu-inset: inset 0 1px 0 rgba(255,255,255,0.8);
+    --background-gradient-light: linear-gradient(135deg, #f3fbff 0%, #e6f7ff 50%, #f8feff 100%);
     --background-gradient-dark: linear-gradient(135deg, #0a0a0a, #1a1a1a, #0a0a0a);
   }
 
@@ -97,6 +100,19 @@
   .app-content-layer { position: relative; z-index: 1; min-height: 100vh; }
 
   .light-blob { position: fixed; border-radius: 999px; filter: blur(72px); pointer-events: none; }
+
+  /* decorative animated light blob only visible in light mode */
+  .light .light-blob {
+    width: 520px;
+    height: 520px;
+    top: 6%;
+    left: 6%;
+    background: radial-gradient(closest-side at 30% 30%, rgba(6,182,212,0.14), rgba(6,182,212,0.06) 30%, transparent 55%);
+    animation: parallax-float 9s ease-in-out infinite;
+    opacity: 1;
+    z-index: -3;
+  }
+  .dark .light-blob { opacity: 0; pointer-events: none; }
 }
 
 /* Small responsive fixes */
@@ -115,6 +131,55 @@ html, body, #root { height: 100%; }
   }
 }
 
+@keyframes text-reveal {
+  0% {
+    opacity: 0;
+    clip-path: inset(0 100% 0 0);
+  }
+  100% {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes fade-slide-up {
+  0% {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(0, 180, 200, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(0, 180, 200, 0);
+  }
+}
+
+@keyframes parallax-float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes glow-card {
+  0%, 100% {
+    box-shadow: 0 16px 40px -20px hsla(205 60% 30% / 0.12);
+  }
+  50% {
+    box-shadow: 0 20px 50px -15px hsla(205 80% 40% / 0.18);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .light-blob,
   .dark-wave-layer {
@@ -128,26 +193,29 @@ html, body, #root { height: 100%; }
 
 .page-panel {
   border-radius: 1.25rem;
-  border: 1px solid hsla(var(--border), 0.4);
-  background: hsl(var(--card) / 0.95);
+  border: 1px solid hsla(var(--border), 0.5);
+  background: hsl(var(--card) / 0.98);
   color: hsl(var(--card-foreground));
-  backdrop-filter: blur(16px);
-  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-dashboard);
+  transition: all 300ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .page-panel-soft {
   border-radius: 1.5rem;
-  border: 1px solid hsla(var(--border), 0.28);
-  background: hsl(var(--card) / 0.88);
+  border: 1px solid hsla(var(--border), 0.4);
+  background: hsl(var(--card) / 0.92);
   color: hsl(var(--card-foreground));
-  backdrop-filter: blur(14px);
-  box-shadow: 0 18px 45px -28px hsla(215 18% 18% / 0.1);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 16px 40px -20px hsla(205 60% 30% / 0.12);
+  transition: all 300ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .surface-card {
   border-radius: 1.5rem;
-  border: 1px solid hsla(var(--border), 0.35);
-  background: hsl(var(--card) / 0.96);
+  position: relative;
+  border: 1px solid hsla(var(--border), 0.45);
+  background: hsl(var(--card) / 0.98);
   color: hsl(var(--card-foreground));
   box-shadow: 0 25px 70px -32px hsla(215 18% 18% / 0.08);
 }
@@ -184,10 +252,63 @@ html, body, #root { height: 100%; }
   box-shadow: var(--shadow-card);
   transition: all 0.2s ease;
 }
+.premium-card { position: relative; }
 
 .premium-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 25px 70px -32px hsla(215 18% 18% / 0.12), 0 0 20px hsla(var(--accent), 0.08);
+}
+
+/* Stronger, more attractive light-mode card styles */
+.light .surface-card,
+.light .page-panel,
+.light .page-panel-soft,
+.light .premium-card {
+  background: linear-gradient(180deg, hsl(var(--card) / 1), hsl(193 65% 97% / 0.96));
+  border: 1px solid rgba(6, 182, 212, 0.12);
+  color: hsl(var(--card-foreground));
+  box-shadow: var(--shadow-card), 0 8px 30px rgba(6, 182, 212, 0.04);
+  backdrop-filter: blur(10px);
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 220ms ease, border-color 220ms ease;
+}
+
+.light .surface-card:hover,
+.light .premium-card:hover,
+.light .page-panel:hover {
+  transform: translateY(-6px) scale(1.006);
+  box-shadow: 0 30px 90px -30px rgba(6,182,212,0.12), 0 12px 30px rgba(6,182,212,0.06);
+  border-color: rgba(6,182,212,0.18);
+}
+
+/* utility class for high-impact cards to emphasize with cyan shadow */
+.highlight-card {
+  box-shadow: var(--shadow-card) !important;
+  border-color: rgba(6,182,212,0.12) !important;
+}
+
+/* when user disables decorative effects, tone down shadows and hide blobs */
+.decorative-disabled .light-blob,
+.decorative-disabled .dark .light-blob {
+  display: none !important;
+  opacity: 0 !important;
+}
+.decorative-disabled .surface-card,
+.decorative-disabled .premium-card,
+.decorative-disabled .page-panel {
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06) !important;
+  transform: none !important;
+}
+
+/* subtle inner highlight for light cards */
+.light .surface-card::before,
+.light .premium-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(600px 200px at 10% 10%, rgba(6,182,212,0.03), transparent 10%), radial-gradient(400px 150px at 90% 90%, rgba(34,211,238,0.02), transparent 12%);
+  mix-blend-mode: screen;
 }
 
 .premium-button {

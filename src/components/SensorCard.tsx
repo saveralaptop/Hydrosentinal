@@ -1,4 +1,6 @@
 import { Droplet, Gauge, Thermometer, Waves, type LucideIcon } from "lucide-react";
+import { motion } from "framer-motion";
+import { get3DCardVariants } from "@/hooks/useAnimationUtils";
 
 type Props = {
   label: string;
@@ -36,8 +38,11 @@ export const SensorCard = ({ label, value, unit, icon, safeRange, alert, sparkli
 
   const gaugeColor = alert ? '#f43f5e' : '#06b6d4';
   return (
-    <div
-      className={`group relative overflow-hidden rounded-2xl border bg-card p-5 shadow-card transition-all duration-300 ease-out motion-safe:hover:-translate-y-1 motion-safe:hover:shadow-xl ${
+    <motion.div
+      whileHover="hover"
+      initial="initial"
+      variants={get3DCardVariants()}
+      className={`group relative overflow-hidden rounded-2xl border bg-card p-5 shadow-card transition-all duration-300 ease-out ${
         alert ? "border-danger/60" : "border-border"
       }`}
     >
@@ -110,6 +115,6 @@ export const SensorCard = ({ label, value, unit, icon, safeRange, alert, sparkli
           ) : null}
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 };

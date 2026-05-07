@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { motion } from "framer-motion";
 import {
   LineChart,
   Line,
@@ -50,7 +51,13 @@ export const WaterGraph = ({ data, type, title = "Graph", color = "#3b82f6", uni
   const yDomain = useMemo(computeDomain, [data, type]);
 
   return (
-    <div className="bg-white/5 backdrop-blur-md rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-[1.02] transition duration-300">
+    <motion.div
+      whileHover={{ scale: 1.01 }}
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5 }}
+      className="bg-white/5 backdrop-blur-md rounded-2xl p-6 border border-white/10 shadow-xl"
+    >
       {" "}
       <h2 className="text-sm font-semibold mb-3">{title}</h2>
       <ResponsiveContainer width="100%" height={250}>
@@ -134,6 +141,6 @@ export const WaterGraph = ({ data, type, title = "Graph", color = "#3b82f6", uni
           )}
         </LineChart>
       </ResponsiveContainer>
-    </div>
+    </motion.div>
   );
 };

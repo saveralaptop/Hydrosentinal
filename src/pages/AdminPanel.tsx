@@ -3,6 +3,12 @@ import { toIsoTimestamp } from "@/lib/deviceStore";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { motion } from "framer-motion";
+import {
+  getParallaxVariants,
+  getStaggerContainerVariants,
+  getFadeSlideUpVariants,
+  get3DCardVariants,
+} from "@/hooks/useAnimationUtils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StatusBanner } from "@/components/StatusBanner";

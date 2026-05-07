@@ -2,6 +2,14 @@
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { AnimatePresence, motion } from "framer-motion";
+import {
+  getParallaxVariants,
+  getStaggerContainerVariants,
+  getFadeSlideUpVariants,
+  get3DCardVariants,
+  getHeroCardVariants,
+  usePrefersReducedMotion,
+} from "@/hooks/useAnimationUtils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StatusBanner } from "@/components/StatusBanner";
@@ -184,6 +192,8 @@ export const UserDashboard = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const { devices: userDevices, addDevice, removeDevice } = useDevices();
+  const prefersReducedMotion = usePrefersReducedMotion();
+  const dashboardCardVariants = prefersReducedMotion ? get3DCardVariants('none') : getHeroCardVariants();
 
   const [loading, setLoading] = useState(true);
   const [devicesLoading, setDevicesLoading] = useState(true);
@@ -1280,7 +1290,12 @@ export const UserDashboard = () => {
             className="space-y-4"
           >
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="premium-card p-5">
+              <motion.div
+                whileHover="hover"
+                initial="initial"
+                variants={dashboardCardVariants}
+                className="premium-card p-5"
+              >
                 <p className="text-sm text-slate-600 uppercase tracking-[0.22em] mb-3">
                   Devices
                 </p>
@@ -1290,8 +1305,13 @@ export const UserDashboard = () => {
                 <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
                   Connected simulators and real devices
                 </p>
-              </div>
-              <div className="premium-card p-5">
+              </motion.div>
+              <motion.div
+                whileHover="hover"
+                initial="initial"
+                variants={dashboardCardVariants}
+                className="premium-card p-5"
+              >
                 <p className="text-sm text-slate-600 uppercase tracking-[0.22em] mb-3">
                   Alerts
                 </p>
@@ -1301,8 +1321,13 @@ export const UserDashboard = () => {
                 <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
                   Current warnings and stability status
                 </p>
-              </div>
-              <div className="premium-card p-5">
+              </motion.div>
+              <motion.div
+                whileHover="hover"
+                initial="initial"
+                variants={dashboardCardVariants}
+                className="premium-card p-5"
+              >
                 <p className="text-sm text-slate-600 uppercase tracking-[0.22em] mb-3">
                   Selected Zone
                 </p>
@@ -1312,8 +1337,13 @@ export const UserDashboard = () => {
                 <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
                   Water monitoring region analysis
                 </p>
-              </div>
-              <div className="premium-card p-5">
+              </motion.div>
+              <motion.div
+                whileHover="hover"
+                initial="initial"
+                variants={dashboardCardVariants}
+                className="premium-card p-5"
+              >
                 <p className="text-sm text-slate-600 uppercase tracking-[0.22em] mb-3">
                   Mode
                 </p>
@@ -1323,10 +1353,15 @@ export const UserDashboard = () => {
                 <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
                   Real-time status and sync controls
                 </p>
-              </div>
+              </motion.div>
             </div>
             <div className="grid gap-4 lg:grid-cols-3">
-              <div className="premium-card p-5">
+              <motion.div
+                whileHover="hover"
+                initial="initial"
+                variants={dashboardCardVariants}
+                className="premium-card p-5"
+              >
                 <p className="text-sm text-slate-600 uppercase tracking-[0.22em] mb-2">
                   Safety Score
                 </p>
@@ -1336,8 +1371,13 @@ export const UserDashboard = () => {
                 <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
                   Based on last {latestReadings.length || 0} live readings.
                 </p>
-              </div>
-              <div className="premium-card p-5">
+              </motion.div>
+              <motion.div
+                whileHover="hover"
+                initial="initial"
+                variants={dashboardCardVariants}
+                className="premium-card p-5"
+              >
                 <p className="text-sm text-slate-600 uppercase tracking-[0.22em] mb-2">
                   Predictive Risk
                 </p>
@@ -1347,15 +1387,20 @@ export const UserDashboard = () => {
                 <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
                   {dashboardInsights.trendDelta}
                 </p>
-              </div>
-              <div className="premium-card p-5">
+              </motion.div>
+              <motion.div
+                whileHover="hover"
+                initial="initial"
+                variants={get3DCardVariants()}
+                className="premium-card p-5"
+              >
                 <p className="text-sm text-slate-600 uppercase tracking-[0.22em] mb-2">
                   AI Recommendation
                 </p>
                 <p className="text-base font-semibold text-slate-950 dark:text-white">
                   {dashboardInsights.recommendation}
                 </p>
-              </div>
+              </motion.div>
             </div>
 
             {/* Water Quality Alert Panel */}
