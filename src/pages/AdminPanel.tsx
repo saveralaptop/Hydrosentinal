@@ -37,6 +37,7 @@ import {
   Eye,
   Wifi,
   WifiOff,
+  Clock3,
 } from "lucide-react";
 import {
   Dialog,
@@ -171,6 +172,56 @@ const mergeDeviceRecords = (primary: DeviceRecord[], fallback: DeviceRecord[]) =
   return Array.from(merged.values()).sort((left, right) =>
     String(left.name ?? left.id).localeCompare(String(right.name ?? right.id))
   );
+};
+
+const hasConfiguredLocation = (device: DeviceRecord) =>
+  Number.isFinite(device.latitude) && Number.isFinite(device.longitude);
+
+const getSyncFreshnessMeta = (value?: string | null) => {
+  const elapsedMs = value ? Date.now() - toTimeValue(value) : Number.POSITIVE_INFINITY;
+
+  if (!Number.isFinite(elapsedMs) || elapsedMs === Number.POSITIVE_INFINITY) {
+    return {
+      label: "No sync yet",
+      description: "Waiting for Firestore snapshots",
+      percent: 0,
+      tone: "amber" as const,
+    };
+  }
+
+  if (elapsedMs < 15000) {
+    return {
+      label: "Fresh",
+      description: "Updated just now",
+      percent: 100,
+      tone: "emerald" as const,
+    };
+  }
+
+  if (elapsedMs < 60000) {
+    return {
+      label: "Warm",
+      description: `${Math.ceil(elapsedMs / 1000)}s ago`,
+      percent: 70,
+      tone: "cyan" as const,
+    };
+  }
+
+  if (elapsedMs < 300000) {
+    return {
+      label: "Stale",
+      description: `${Math.ceil(elapsedMs / 60000)}m ago`,
+      percent: 35,
+      tone: "amber" as const,
+    };
+  }
+
+  return {
+    label: "Degraded",
+    description: `${Math.ceil(elapsedMs / 60000)}m ago`,
+    percent: 12,
+    tone: "rose" as const,
+  };
 };
 
 const parseList = (value: string) =>
@@ -447,6 +498,10 @@ export const AdminPanel = () => {
   }, []);
 
   const selectedUser = users.find((entry) => entry.id === selectedUserId) ?? null;
+  const rootDeviceCount = rootDevices.length;
+  const nestedDeviceCount = nestedDevices.length;
+  const dedupedDeviceCount = devices.length;
+  const syncFreshnessMeta = getSyncFreshnessMeta(lastSyncAt);
   const selectedUserDetails = useMemo(() => {
     if (!selectedUser) {
       return [] as Array<{ label: string; value: string }>;
@@ -576,6 +631,33 @@ export const AdminPanel = () => {
       })),
     [devices, users]
   );
+
+  const deviceHealthByUser = useMemo(() => {
+    return users.reduce<Record<string, {
+      total: number;
+      withLocation: number;
+      safe: number;
+      unsafe: number;
+    }>>((acc, entry) => {
+      const ownedDevices = devices.filter((device) => getDeviceOwnerUid(device) === entry.id);
+      const withLocation = ownedDevices.filter(
+        (device) => Number.isFinite(device.latitude) && Number.isFinite(device.longitude),
+      ).length;
+      const safe = ownedDevices.filter((device) => device.status === "active").length;
+      const unsafe = ownedDevices.length - safe;
+
+      acc[entry.id] = {
+        total: ownedDevices.length,
+        withLocation,
+        safe,
+        unsafe,
+      };
+
+      return acc;
+    }, {});
+  }, [devices, users]);
+
+  const selectedUserDeviceHealth = selectedUserId ? deviceHealthByUser[selectedUserId] : undefined;
 
   const filteredReadingsByDevice = useMemo(() => {
     const query = readingSearch.trim().toLowerCase();
@@ -893,7 +975,7 @@ export const AdminPanel = () => {
             <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">Track users and registered devices</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold ${
+            <div className={`inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold ${
               usersSyncMode === "live" && devicesSyncMode === "live"
                 ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
                 : usersSyncMode === "fallback" || devicesSyncMode === "fallback"
@@ -906,6 +988,10 @@ export const AdminPanel = () => {
                 : usersSyncMode === "fallback" || devicesSyncMode === "fallback"
                   ? "Fallback Data Active"
                   : "Syncing..."}
+              <span className="font-normal opacity-80">Users {users.length}</span>
+              <span className="font-normal opacity-80">Root {rootDeviceCount}</span>
+              <span className="font-normal opacity-80">Nested {nestedDeviceCount}</span>
+              <span className="font-normal opacity-80">Unique {dedupedDeviceCount}</span>
               {lastSyncAt ? <span className="font-normal opacity-80">{new Date(lastSyncAt).toLocaleTimeString()}</span> : null}
             </div>
             <span className="text-slate-600 dark:text-slate-300 text-sm">{user?.email}</span>
@@ -977,6 +1063,17 @@ export const AdminPanel = () => {
                       <p className="text-slate-950 text-sm font-semibold dark:text-white">{entry.email}</p>
                       <p className="text-cyan-700 text-xs mt-1 dark:text-cyan-300">Devices: {entry.deviceCount}</p>
                       <p className="text-slate-500 text-[11px] mt-1 dark:text-slate-400">User ID: {entry.id}</p>
+                      <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-medium">
+                        <span className="rounded-full bg-emerald-500/15 px-2 py-1 text-emerald-700 dark:text-emerald-200">
+                          {deviceHealthByUser[entry.id]?.withLocation ?? 0} loc-ready
+                        </span>
+                        <span className="rounded-full bg-slate-500/15 px-2 py-1 text-slate-700 dark:text-slate-200">
+                          {deviceHealthByUser[entry.id]?.safe ?? 0} active
+                        </span>
+                        <span className="rounded-full bg-red-500/15 px-2 py-1 text-red-700 dark:text-red-200">
+                          {deviceHealthByUser[entry.id]?.unsafe ?? 0} inactive
+                        </span>
+                      </div>
                     </button>
 
                     <div className="mt-3 flex flex-wrap gap-2">
@@ -1066,6 +1163,82 @@ export const AdminPanel = () => {
                   </div>
                 </div>
 
+                <div className="mb-5 grid gap-3 rounded-3xl border border-slate-200/80 bg-white/70 p-4 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/50 sm:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-950/30">
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Sync Source</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-950 dark:text-white">
+                      {usersSyncMode === "live" && devicesSyncMode === "live"
+                        ? "Firestore live"
+                        : usersSyncMode === "fallback" || devicesSyncMode === "fallback"
+                          ? "Fallback mode"
+                          : "Syncing..."}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-950/30">
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Selected Devices</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-950 dark:text-white">{selectedUserDeviceHealth?.total ?? selectedUserDevices.length}</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-950/30">
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Location Coverage</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-950 dark:text-white">
+                      {selectedUserDeviceHealth?.withLocation ?? selectedUserDevices.filter((device) => Number.isFinite(device.latitude) && Number.isFinite(device.longitude)).length}
+                      /{selectedUserDevices.length || 1}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-950/30">
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Status Mix</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-950 dark:text-white">
+                      {selectedUserDeviceHealth?.safe ?? 0} active / {selectedUserDeviceHealth?.unsafe ?? 0} inactive
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mb-5 rounded-3xl border border-slate-200/80 bg-white/70 p-4 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/50">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                        Sync Freshness
+                      </p>
+                      <div className="mt-1 flex items-center gap-2">
+                        <Clock3 className="h-4 w-4 text-cyan-600 dark:text-cyan-300" />
+                        <p className="text-sm font-semibold text-slate-950 dark:text-white">
+                          {syncFreshnessMeta.label}
+                        </p>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+                        {syncFreshnessMeta.description}
+                      </p>
+                    </div>
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                        syncFreshnessMeta.tone === "emerald"
+                          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-200"
+                          : syncFreshnessMeta.tone === "cyan"
+                            ? "bg-cyan-500/15 text-cyan-700 dark:text-cyan-200"
+                            : syncFreshnessMeta.tone === "amber"
+                              ? "bg-amber-500/15 text-amber-700 dark:text-amber-200"
+                              : "bg-rose-500/15 text-rose-700 dark:text-rose-200"
+                      }`}
+                    >
+                      {syncFreshnessMeta.percent}%
+                    </span>
+                  </div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        syncFreshnessMeta.tone === "emerald"
+                          ? "bg-emerald-500"
+                          : syncFreshnessMeta.tone === "cyan"
+                            ? "bg-cyan-500"
+                            : syncFreshnessMeta.tone === "amber"
+                              ? "bg-amber-500"
+                              : "bg-rose-500"
+                      }`}
+                      style={{ width: `${syncFreshnessMeta.percent}%` }}
+                    />
+                  </div>
+                </div>
+
                 <div className="mb-6 grid gap-3 rounded-3xl border border-slate-200/80 bg-white/70 p-4 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/50 sm:grid-cols-2 xl:grid-cols-3">
                   {selectedUserDetails.map((item) => (
                     <div key={item.label} className="rounded-2xl border border-slate-200/70 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-950/30">
@@ -1114,6 +1287,17 @@ export const AdminPanel = () => {
                             <p className="mt-2 text-xs text-cyan-300 font-mono">Device ID: {device.uniqueId}</p>
                             <p className="mt-2 text-sm text-gray-300">Location: {device.location}</p>
                             <p className="mt-1 text-xs text-gray-500">Record ID: {device.id}</p>
+                            <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-medium">
+                              <span className={`rounded-full px-2 py-1 ${hasConfiguredLocation(device) ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-200" : "bg-amber-500/15 text-amber-700 dark:text-amber-200"}`}>
+                                {hasConfiguredLocation(device) ? "GPS Ready" : "Location Missing"}
+                              </span>
+                              <span className="rounded-full bg-slate-500/15 px-2 py-1 text-slate-700 dark:text-slate-200">
+                                {device.deviceType === "real" ? "Real Hardware" : "Simulator"}
+                              </span>
+                              <span className="rounded-full bg-cyan-500/15 px-2 py-1 text-cyan-700 dark:text-cyan-200">
+                                {device.zone ?? "Zone Pending"}
+                              </span>
+                            </div>
                           </button>
 
                           <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-gray-400">
@@ -1123,6 +1307,18 @@ export const AdminPanel = () => {
                             <div>Battery: {device.battery ?? "-"}%</div>
                             <div>Lat: {device.latitude ?? "-"}</div>
                             <div>Lng: {device.longitude ?? "-"}</div>
+                          </div>
+
+                          <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-medium">
+                            <span className={`rounded-full px-2 py-1 ${hasConfiguredLocation(device) ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-200" : "bg-amber-500/15 text-amber-700 dark:text-amber-200"}`}>
+                              {hasConfiguredLocation(device) ? "Location synced" : "Awaiting location"}
+                            </span>
+                            <span className="rounded-full bg-slate-500/15 px-2 py-1 text-slate-700 dark:text-slate-200">
+                              {device.status === "active" ? "Online" : "Offline"}
+                            </span>
+                            <span className="rounded-full bg-cyan-500/15 px-2 py-1 text-cyan-700 dark:text-cyan-200">
+                              {device.deviceType === "real" ? "Hardware" : "Simulator"}
+                            </span>
                           </div>
 
                           <div className="mt-4 flex flex-wrap gap-2">
