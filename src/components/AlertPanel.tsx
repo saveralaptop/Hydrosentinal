@@ -15,6 +15,9 @@ export const AlertPanel: React.FC<AlertPanelProps> = ({
   currentLevel,
   isLoading = false,
 }) => {
+  const latestAlert = alerts[0] ?? null;
+  const alertCount = alerts.length;
+
   const getAlertBgColor = (level: AlertLevel): string => {
     switch (level) {
       case AlertLevel.DANGER:
@@ -109,9 +112,16 @@ export const AlertPanel: React.FC<AlertPanelProps> = ({
 
       {/* Recent Alerts List */}
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-          Alert History
-        </h3>
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+            Recent Alert History
+          </h3>
+          {!isLoading && alertCount > 3 && (
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Showing latest 3 of {alertCount}
+            </p>
+          )}
+        </div>
 
         {isLoading ? (
           <div className="space-y-2">
@@ -123,14 +133,17 @@ export const AlertPanel: React.FC<AlertPanelProps> = ({
             ))}
           </div>
         ) : alerts.length === 0 ? (
-          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 text-center dark:border-emerald-900/50 dark:bg-emerald-950/20">
-            <p className="text-sm text-emerald-700 dark:text-emerald-300">
-              No alerts recorded. Water quality is stable! 💧
+          <div className="rounded-2xl border border-cyan-200 bg-cyan-50/60 p-4 dark:border-cyan-900/40 dark:bg-cyan-950/20">
+            <p className="text-sm font-semibold text-cyan-900 dark:text-cyan-200">
+              No alert history yet.
+            </p>
+            <p className="mt-1 text-xs text-cyan-700 dark:text-cyan-300/80">
+              We will show warning and danger events here once readings start crossing thresholds.
             </p>
           </div>
         ) : (
-          <div className="space-y-2 max-h-96 overflow-y-auto">
-            {alerts.map((alert) => (
+          <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+            {alerts.slice(0, 3).map((alert) => (
               <motion.div
                 key={alert.id}
                 initial={{ opacity: 0, x: -10 }}
@@ -172,7 +185,7 @@ export const AlertPanel: React.FC<AlertPanelProps> = ({
                       {formatTime(alert.timestamp)}
                     </p>
                     {alert.sentSMS && (
-                      <p className="text-xs font-semibold text-cyan-600 dark:text-cyan-400 mt-1">
+                      <p className="mt-1 text-xs font-semibold text-cyan-600 dark:text-cyan-400">
                         📱 SMS Sent
                       </p>
                     )}
@@ -182,33 +195,6 @@ export const AlertPanel: React.FC<AlertPanelProps> = ({
             ))}
           </div>
         )}
-      </div>
-
-      {/* Safety Thresholds Reference */}
-      <div className="mt-4 rounded-xl bg-slate-50 p-3 dark:bg-slate-900/30">
-        <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">
-          Safety Thresholds
-        </p>
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <div>
-            <p className="opacity-75">TDS</p>
-            <p className="text-amber-600 dark:text-amber-400">
-              ⚠️ &gt;{WATER_THRESHOLDS.TDS.warning} ppm
-            </p>
-            <p className="text-red-600 dark:text-red-400">
-              🚨 &gt;{WATER_THRESHOLDS.TDS.danger} ppm
-            </p>
-          </div>
-          <div>
-            <p className="opacity-75">pH</p>
-            <p className="text-red-600 dark:text-red-400">
-              🚨 &lt;{WATER_THRESHOLDS.pH.min_safe}
-            </p>
-            <p className="text-red-600 dark:text-red-400">
-              🚨 &gt;{WATER_THRESHOLDS.pH.max_safe}
-            </p>
-          </div>
-        </div>
       </div>
     </div>
   );

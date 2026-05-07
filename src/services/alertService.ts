@@ -196,7 +196,8 @@ export const getDeviceAlerts = (
 export const monitorWaterReadings = (
   deviceId: string,
   userId: string,
-  callback: (reading: WaterReading, level: AlertLevel | null) => void
+  callback: (reading: WaterReading, level: AlertLevel | null) => void,
+  onEmpty?: () => void,
 ): (() => void) => {
   const q = query(
     collection(db, `devices/${deviceId}/readings`),
@@ -205,6 +206,11 @@ export const monitorWaterReadings = (
   );
 
   const unsubscribe = onSnapshot(q, async (snapshot) => {
+    if (snapshot.empty) {
+      onEmpty?.();
+      return;
+    }
+
     for (const docSnapshot of snapshot.docs) {
       const reading = {
         id: docSnapshot.id,
