@@ -35,6 +35,8 @@ import {
   ChevronRight,
   ShieldAlert,
   Eye,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import {
   Dialog,
@@ -114,10 +116,61 @@ const formatDate = (value?: unknown) => {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 };
 
-const mergeById = <T extends { id: string }>(primary: T[], fallback: T[]) => {
-  const merged = new Map<string, T>();
-  [...fallback, ...primary].forEach((entry) => merged.set(entry.id, entry));
-  return Array.from(merged.values());
+const toTimeValue = (value?: unknown) => {
+  if (!value) return 0;
+
+  const iso = toIsoTimestamp(value);
+  const parsed = iso ? new Date(iso) : new Date(String(value));
+  const time = parsed.getTime();
+  return Number.isFinite(time) ? time : 0;
+};
+
+const getDeviceOwnerUid = (device: Record<string, unknown>) => {
+  const fallbackOwner = typeof device.ownerUid === "string" ? device.ownerUid : "";
+  if (fallbackOwner) return fallbackOwner;
+
+  const legacyOwner = device.ownerId;
+  return typeof legacyOwner === "string" ? legacyOwner : "";
+};
+
+const getDeviceSyncScore = (device: DeviceRecord) => {
+  const hasLocation = Number.isFinite(device.latitude) && Number.isFinite(device.longitude);
+  const hasZone = Boolean(device.zone);
+  const hasAddress = Boolean(device.location?.trim());
+  const updatedAt = Math.max(
+    toTimeValue(device.lastLocationUpdate),
+    toTimeValue(device.createdAt),
+  );
+
+  return [updatedAt, hasLocation ? 1 : 0, hasZone ? 1 : 0, hasAddress ? 1 : 0] as const;
+};
+
+const compareDeviceFreshness = (left: DeviceRecord, right: DeviceRecord) => {
+  const leftScore = getDeviceSyncScore(left);
+  const rightScore = getDeviceSyncScore(right);
+
+  for (let index = 0; index < leftScore.length; index += 1) {
+    if (leftScore[index] !== rightScore[index]) {
+      return rightScore[index] - leftScore[index];
+    }
+  }
+
+  return 0;
+};
+
+const mergeDeviceRecords = (primary: DeviceRecord[], fallback: DeviceRecord[]) => {
+  const merged = new Map<string, DeviceRecord>();
+
+  [...fallback, ...primary].forEach((entry) => {
+    const current = merged.get(entry.id);
+    if (!current || compareDeviceFreshness(current, entry) > 0) {
+      merged.set(entry.id, entry);
+    }
+  });
+
+  return Array.from(merged.values()).sort((left, right) =>
+    String(left.name ?? left.id).localeCompare(String(right.name ?? right.id))
+  );
 };
 
 const parseList = (value: string) =>
@@ -234,6 +287,9 @@ export const AdminPanel = () => {
   const [isUserDrawerOpen, setIsUserDrawerOpen] = useState(false);
   const [isUserEditOpen, setIsUserEditOpen] = useState(false);
   const [isDeviceEditOpen, setIsDeviceEditOpen] = useState(false);
+  const [usersSyncMode, setUsersSyncMode] = useState<"loading" | "live" | "degraded" | "fallback">("loading");
+  const [devicesSyncMode, setDevicesSyncMode] = useState<"loading" | "live" | "degraded" | "fallback">("loading");
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [userForm, setUserForm] = useState<UserEditForm>({
     email: "",
     name: "",
@@ -307,6 +363,8 @@ export const AdminPanel = () => {
         });
 
         setUsers(remoteUsers);
+        setUsersSyncMode("live");
+        setLastSyncAt(new Date().toISOString());
         setSelectedUserId((prev) =>
           prev ?? remoteUsers.find((u) => u.role === "user")?.id ?? remoteUsers[0]?.id ?? null
         );
@@ -316,6 +374,8 @@ export const AdminPanel = () => {
         console.error("Error loading admin users:", error);
         const fallbackUsers = readLocalUsers();
         setUsers(fallbackUsers);
+        setUsersSyncMode((prev) => (prev === "live" ? "degraded" : "fallback"));
+        setLastSyncAt(new Date().toISOString());
         setSelectedUserId((prev) =>
           prev ?? fallbackUsers.find((u) => u.role === "user")?.id ?? fallbackUsers[0]?.id ?? null
         );
@@ -329,6 +389,7 @@ export const AdminPanel = () => {
         const rootDeviceList: DeviceRecord[] = devicesSnap.docs.map((item) => ({
           id: item.id,
           ...(item.data() as Omit<DeviceRecord, "id">),
+          ownerUid: getDeviceOwnerUid(item.data() as Record<string, unknown>) || user?.uid || "",
         }));
 
         console.debug("[AdminPanel] root devices snapshot", {
@@ -337,11 +398,15 @@ export const AdminPanel = () => {
         });
 
         setRootDevices(rootDeviceList);
+        setDevicesSyncMode("live");
+        setLastSyncAt(new Date().toISOString());
         setLoading(false);
       },
       (error) => {
         console.error("Error loading root admin devices:", error);
         setRootDevices(readLocalDevices());
+        setDevicesSyncMode((prev) => (prev === "live" ? "degraded" : "fallback"));
+        setLastSyncAt(new Date().toISOString());
         setLoading(false);
       }
     );
@@ -352,6 +417,7 @@ export const AdminPanel = () => {
         const nestedDeviceList: DeviceRecord[] = devicesSnap.docs.map((item) => ({
           id: item.id,
           ...(item.data() as Omit<DeviceRecord, "id">),
+          ownerUid: getDeviceOwnerUid(item.data() as Record<string, unknown>) || user?.uid || "",
         }));
 
         console.debug("[AdminPanel] nested devices snapshot", {
@@ -360,11 +426,15 @@ export const AdminPanel = () => {
         });
 
         setNestedDevices(nestedDeviceList);
+        setDevicesSyncMode("live");
+        setLastSyncAt(new Date().toISOString());
         setLoading(false);
       },
       (error) => {
         console.error("Error loading nested admin devices:", error);
         setNestedDevices([]);
+        setDevicesSyncMode((prev) => (prev === "live" ? "degraded" : "fallback"));
+        setLastSyncAt(new Date().toISOString());
         setLoading(false);
       }
     );
@@ -397,11 +467,11 @@ export const AdminPanel = () => {
     ];
   }, [selectedUser]);
   useEffect(() => {
-    setDevices(mergeById(rootDevices, nestedDevices));
+    setDevices(mergeDeviceRecords(rootDevices, nestedDevices));
   }, [rootDevices, nestedDevices]);
 
   const selectedUserDevices = useMemo(
-    () => devices.filter((device) => device.ownerUid === selectedUserId),
+    () => devices.filter((device) => getDeviceOwnerUid(device) === selectedUserId),
     [devices, selectedUserId]
   );
 
@@ -502,7 +572,7 @@ export const AdminPanel = () => {
     () =>
       users.map((entry) => ({
         ...entry,
-        deviceCount: devices.filter((device) => device.ownerUid === entry.id).length,
+        deviceCount: devices.filter((device) => getDeviceOwnerUid(device) === entry.id).length,
       })),
     [devices, users]
   );
@@ -611,6 +681,9 @@ export const AdminPanel = () => {
 
   const deleteUserTree = async (targetUserId: string) => {
     const userDevicesSnapshot = await getDocs(collection(db, "users", targetUserId, "devices"));
+    const rootDevicesSnapshot = await getDocs(
+      query(collection(db, "devices"), where("ownerUid", "==", targetUserId))
+    );
 
     for (const item of userDevicesSnapshot.docs) {
       const readingsSnapshot = await getDocs(collection(db, "users", targetUserId, "devices", item.id, "readings"));
@@ -623,6 +696,11 @@ export const AdminPanel = () => {
         // Root mirror may be unavailable.
       }
 
+      await deleteDoc(item.ref);
+      removeLocalDevice(item.id);
+    }
+
+    for (const item of rootDevicesSnapshot.docs) {
       await deleteDoc(item.ref);
       removeLocalDevice(item.id);
     }
@@ -815,9 +893,24 @@ export const AdminPanel = () => {
             <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">Track users and registered devices</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <ThemeToggle />
+            <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold ${
+              usersSyncMode === "live" && devicesSyncMode === "live"
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
+                : usersSyncMode === "fallback" || devicesSyncMode === "fallback"
+                  ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200"
+                  : "border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-200"
+            }`}>
+              {usersSyncMode === "live" && devicesSyncMode === "live" ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
+              {usersSyncMode === "live" && devicesSyncMode === "live"
+                ? "Live Firestore Sync"
+                : usersSyncMode === "fallback" || devicesSyncMode === "fallback"
+                  ? "Fallback Data Active"
+                  : "Syncing..."}
+              {lastSyncAt ? <span className="font-normal opacity-80">{new Date(lastSyncAt).toLocaleTimeString()}</span> : null}
+            </div>
             <span className="text-slate-600 dark:text-slate-300 text-sm">{user?.email}</span>
-            <Button onClick={handleLogout} className="premium-button flex items-center gap-2">
+            <ThemeToggle />
+            <Button onClick={handleLogout} className="premium-button  inline-flex items-center justify-center rounded-full border border-slate-200 bg-white/90 p-2 text-slate-700 shadow-sm shadow-slate-900/10 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-200 dark:hover:bg-slate-800/80">
               <LogOut className="w-4 h-4" /> Logout
             </Button>
           </div>

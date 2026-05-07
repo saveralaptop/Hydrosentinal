@@ -19,6 +19,8 @@ import { DeviceLocationPicker } from "@/components/geo/DeviceLocationPicker";
 import { GeoIntelligenceMap } from "@/components/geo/GeoIntelligenceMap";
 import { ZoneIntelligencePanel } from "@/components/geo/ZoneIntelligencePanel";
 import { GeoAlertFeed } from "@/components/geo/GeoAlertFeed";
+import { LiveDeviceMap } from "@/components/geo/LiveDeviceMap";
+import { DeviceDetailPopup } from "@/components/geo/DeviceDetailPopup";
 import AddDeviceModal from "../components/AddDeviceModal";
 // Local lightweight timestamp normalizer to avoid raw Firestore Timestamp leaks
 const toIsoLocal = (value: unknown): string => {
@@ -188,6 +190,7 @@ export const UserDashboard = () => {
   const [simulatorOnly, setSimulatorOnly] = useState(false);
   const [devices, setDevices] = useState<DeviceRecord[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
+  const [selectedDetailDevice, setSelectedDetailDevice] = useState<DeviceRecord | null>(null);
   const [history, setHistory] = useState<
     ReturnType<typeof getLocalDeviceHistory>
   >([]);
@@ -205,19 +208,25 @@ export const UserDashboard = () => {
     name: string;
     type: "simulator" | "real";
     manualLocation: string;
-    latitude: number;
-    longitude: number;
+    latitude: number | null;
+    longitude: number | null;
   }>({
     name: "",
     type: "simulator",
     manualLocation: "",
-    latitude: 25.61,
-    longitude: 85.14,
+    latitude: null, // Force location selection
+    longitude: null,
   });
   const [newDeviceConnected, setNewDeviceConnected] = useState(false);
-  const [newDeviceMapLocation, setNewDeviceMapLocation] = useState({
-    lat: 25.61,
-    lng: 85.14,
+  const [newDeviceMapLocation, setNewDeviceMapLocation] = useState<{
+    lat: number | null;
+    lng: number | null;
+    label: string;
+    address: string;
+    zone: string;
+  }>({
+    lat: null, // Force location selection
+    lng: null,
     label: "",
     address: "",
     zone: "",
@@ -516,12 +525,12 @@ export const UserDashboard = () => {
         name: "",
         type: "simulator",
         manualLocation: "",
-        latitude: 25.61,
-        longitude: 85.14,
+        latitude: null, // Force location selection
+        longitude: null,
       });
       setNewDeviceMapLocation({
-        lat: 25.61,
-        lng: 85.14,
+        lat: null, // Force location selection
+        lng: null,
         label: "",
         address: "",
         zone: "",
@@ -783,6 +792,14 @@ export const UserDashboard = () => {
     navigate("/login");
   };
 
+  const handleMapDeviceSelect = (deviceId: string) => {
+    setSelectedDeviceId(deviceId);
+    const device = devices.find((d) => d.id === deviceId);
+    if (device) {
+      setSelectedDetailDevice(device);
+    }
+  };
+
   const tabMetadata: Record<DashboardTab, {
     eyebrow: string;
     title: string;
@@ -876,7 +893,7 @@ export const UserDashboard = () => {
   const readingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [geoHeatmapEnabled, setGeoHeatmapEnabled] = useState(true);
-  const [geoSimulationEnabled, setGeoSimulationEnabled] = useState(true);
+  const [geoSimulationEnabled, setGeoSimulationEnabled] = useState(false);
   const [geoSoundEnabled, setGeoSoundEnabled] = useState(false);
   const [geoSelectedId, setGeoSelectedId] = useState<string | null>(null);
 
@@ -1070,9 +1087,24 @@ export const UserDashboard = () => {
     70,
   );
   const allGeoPoints = useMemo(
-    () => [...realGeoPoints, ...simulatedDevices],
-    [realGeoPoints, simulatedDevices],
+    () => (geoSimulationEnabled ? [...realGeoPoints, ...simulatedDevices] : realGeoPoints),
+    [geoSimulationEnabled, realGeoPoints, simulatedDevices],
   );
+  const liveGeoAlerts = useMemo(
+    () =>
+      realGeoPoints
+        .filter((point) => point.status === "unsafe")
+        .slice(0, 20)
+        .map((point) => ({
+          id: `live-${point.id}`,
+          deviceId: point.id,
+          message: `${point.name} crossed safe water limits`,
+          status: point.status,
+          timestamp: new Date().toISOString(),
+        })),
+    [realGeoPoints],
+  );
+  const displayedGeoAlerts = geoSimulationEnabled ? alertFeed : liveGeoAlerts;
   const selectedGeoPoint = useMemo(
     () =>
       allGeoPoints.find(
@@ -1111,7 +1143,7 @@ export const UserDashboard = () => {
 
   useEffect(() => {
     const shouldPlay =
-      geoSoundEnabled && alertFeed.some((item) => item.status === "unsafe");
+      geoSoundEnabled && displayedGeoAlerts.some((item) => item.status === "unsafe");
     if (!shouldPlay) return;
     try {
       const audio = new Audio("/sound.mp3");
@@ -1120,7 +1152,7 @@ export const UserDashboard = () => {
     } catch {
       // best effort
     }
-  }, [alertFeed, geoSoundEnabled]);
+  }, [displayedGeoAlerts, geoSoundEnabled]);
 
   if (loading) {
     return (
@@ -2017,7 +2049,7 @@ export const UserDashboard = () => {
                         className={`${geoSimulationEnabled ? "bg-cyan-500 hover:bg-cyan-600" : "bg-slate-700 hover:bg-slate-600"} text-white`}
                       >
                         <Globe className="mr-2 h-4 w-4" />
-                        Sim 70 Devices
+                        Sim 70 Devices {geoSimulationEnabled ? "On" : "Off"}
                       </Button>
                       <Button
                         type="button"
@@ -2031,40 +2063,55 @@ export const UserDashboard = () => {
                   </div>
 
                   <div className="grid gap-4 xl:grid-cols-[1.55fr_0.85fr]">
-                    <div className="h-[30rem] overflow-hidden rounded-[1.5rem] border border-slate-200/80 dark:border-slate-700">
-                      <GeoIntelligenceMap
-                        points={allGeoPoints}
-                        selectedId={geoSelectedId ?? selectedDeviceId}
-                        onSelect={(id) => {
-                          setGeoSelectedId(id);
-                          if (!id.startsWith("sim-")) {
-                            setSelectedDeviceId(id);
-                          }
-                        }}
-                        center={{
-                          lat: selectedGeoPoint?.lat ?? 25.61,
-                          lng: selectedGeoPoint?.lng ?? 85.14,
-                        }}
-                        heatmapEnabled={geoHeatmapEnabled}
-                        prediction={spreadPrediction}
+                    <div className="h-[30rem] overflow-hidden rounded-[1.5rem]">
+                      <LiveDeviceMap
+                        userId={user?.uid}
+                        devices={devices}
+                        latestReadings={latestReadingByDevice}
+                        onDeviceSelect={handleMapDeviceSelect}
+                        selectedDeviceId={selectedDeviceId ?? undefined}
+                        height="h-full"
+                        showHeatmap={geoHeatmapEnabled}
+                        showClustering={true}
+                        showGeofences={true}
                       />
                     </div>
 
                     <div className="space-y-4">
                       <div className="rounded-2xl border border-slate-200/80 bg-white/90 p-4 dark:border-slate-700 dark:bg-slate-900/70">
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-                          Selected device score
-                        </p>
-                        <p className="mt-1 text-3xl font-black text-slate-950 dark:text-white">
-                          {selectedSafetyScore}
-                          <span className="ml-1 text-sm font-medium text-slate-500">
-                            /100
-                          </span>
-                        </p>
-                        <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
-                          {selectedGeoPoint?.name ?? "Select a device marker"} -{" "}
-                          {selectedGeoPoint?.status ?? "unknown"}
-                        </p>
+                        {selectedDevice ? (
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400 mb-2">
+                              Device Status
+                            </p>
+                            <p className="text-lg font-black text-slate-950 dark:text-white">
+                              {selectedDevice.name}
+                            </p>
+                            <p className="text-xs text-slate-600 dark:text-slate-400 mt-2">
+                              {selectedDevice.location || "📍 Location not configured"}
+                            </p>
+                            {!selectedDevice.latitude || !selectedDevice.longitude ? (
+                              <div className="mt-2 p-2 rounded bg-amber-500/20 border border-amber-500/30">
+                                <p className="text-xs text-amber-700 dark:text-amber-300 font-semibold">
+                                  ⚠ Location not configured
+                                </p>
+                              </div>
+                            ) : (
+                              <div className="mt-2 text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
+                                ✓ Real location configured
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                              Selected device
+                            </p>
+                            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+                              Click a marker on the map to view device details
+                            </p>
+                          </div>
+                        )}
                       </div>
                       <div className="rounded-2xl border border-slate-200/80 bg-white/90 p-4 dark:border-slate-700 dark:bg-slate-900/70">
                         <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
@@ -2107,7 +2154,7 @@ export const UserDashboard = () => {
 
                   <div className="grid gap-4 xl:grid-cols-2">
                     <ZoneIntelligencePanel zones={zoneInsights} />
-                    <GeoAlertFeed alerts={alertFeed} />
+                    <GeoAlertFeed alerts={displayedGeoAlerts} />
                   </div>
                 </motion.section>
               )}
@@ -2598,6 +2645,20 @@ export const UserDashboard = () => {
           <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-6 text-gray-300">
             Select a device to view readings, graph, and chat analysis.
           </div>
+        )}
+
+        {/* Device Detail Popup */}
+        {selectedDetailDevice && (
+          <DeviceDetailPopup
+            device={selectedDetailDevice}
+            latestReading={latestReadings[0]}
+            onClose={() => setSelectedDetailDevice(null)}
+            onAnalytics={() => {
+              setActiveTab("Charts");
+              setSelectedDetailDevice(null);
+            }}
+            recentReadings={history.slice(-10)}
+          />
         )}
       </div>
     </main>

@@ -26,6 +26,13 @@ export type DeviceRecord = {
   status: "active" | "inactive";
   battery?: number;
   createdAt: string;
+  // Enhanced location tracking fields
+  address?: string;
+  city?: string;
+  country?: string;
+  lastLocationUpdate?: string;
+  installationType?: "gps" | "manual" | "simulator";
+  isLocationConfigured?: boolean;
 };
 
 const LOCAL_DEVICES_KEY = "hydrosentinel.localDevices";

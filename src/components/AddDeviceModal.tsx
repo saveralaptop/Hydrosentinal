@@ -24,8 +24,8 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({ isOpen, onClose,
   const [zone, setZone] = useState('');
   const [lat, setLat] = useState(20.5937);
   const [lng, setLng] = useState(78.9629);
-  const [selectedLat, setSelectedLat] = useState<number | null>(20.5937);
-  const [selectedLng, setSelectedLng] = useState<number | null>(78.9629);
+  const [selectedLat, setSelectedLat] = useState<number | null>(null); // Force location selection
+  const [selectedLng, setSelectedLng] = useState<number | null>(null); // Force location selection
   const [locationText, setLocationText] = useState('');
   const [submitError, setSubmitError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -43,8 +43,8 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({ isOpen, onClose,
   const resetForm = () => {
     setName('');
     setZone('');
-    setSelectedLat(20.5937);
-    setSelectedLng(78.9629);
+    setSelectedLat(null); // Force location selection on next registration
+    setSelectedLng(null); // Force location selection on next registration
     setLocationText('');
     setSubmitError('');
     setSubmitting(false);
