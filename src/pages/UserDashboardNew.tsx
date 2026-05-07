@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { toIsoTimestamp } from '@/lib/deviceStore';
 import { useAuth } from '../contexts/AuthContext';
 import { useDevices } from '../hooks/useDevices';
 import { AddDeviceModal } from '../components/AddDeviceModal';
@@ -14,8 +15,10 @@ const UserDashboard = () => {
   const { devices, addDevice, removeDevice } = useDevices();
   const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
 
-  const handleAddDevice = (deviceData: { name: string; lat: number; lng: number; zone: string }) => {
-    addDevice(deviceData);
+  const handleAddDevice = async (deviceData: { name: string; lat: number; lng: number; zone: string; location: string }) => {
+    // location is currently unused by the simple local hook; keep API compatible
+    addDevice({ name: deviceData.name, lat: deviceData.lat, lng: deviceData.lng, zone: deviceData.zone });
+    return true;
   };
 
   const handleRemoveDevice = (id: string) => {
@@ -137,7 +140,10 @@ const UserDashboard = () => {
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold">
-                    {devices.length > 0 ? new Date(devices[devices.length - 1].createdAt).toLocaleDateString() : 'N/A'}
+                    {devices.length > 0 ? (() => {
+                      const iso = toIsoTimestamp(devices[devices.length - 1].createdAt);
+                      return iso ? new Date(iso).toLocaleDateString() : String(devices[devices.length - 1].createdAt);
+                    })() : 'N/A'}
                   </div>
                   <p className="text-xs text-muted-foreground">
                     Most recent device addition

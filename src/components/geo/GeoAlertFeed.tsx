@@ -10,6 +10,8 @@ type Props = {
   alerts: AlertItem[];
 };
 
+import { toIsoTimestamp } from '@/lib/deviceStore';
+
 export const GeoAlertFeed = ({ alerts }: Props) => {
   return (
     <section className="rounded-2xl border border-slate-200/80 bg-white/90 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/70">
@@ -30,8 +32,11 @@ export const GeoAlertFeed = ({ alerts }: Props) => {
               }`}
             >
               <p className="font-semibold">{alert.message}</p>
-              <p className="mt-1 opacity-80">
-                {alert.deviceId} - {new Date(alert.timestamp).toLocaleTimeString()}
+                <p className="mt-1 opacity-80">
+                {alert.deviceId} - {(() => {
+                  const iso = toIsoTimestamp(alert.timestamp);
+                  return iso ? new Date(iso).toLocaleTimeString() : String(alert.timestamp);
+                })()}
               </p>
             </div>
           ))

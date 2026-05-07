@@ -20,6 +20,20 @@ import { GeoIntelligenceMap } from "@/components/geo/GeoIntelligenceMap";
 import { ZoneIntelligencePanel } from "@/components/geo/ZoneIntelligencePanel";
 import { GeoAlertFeed } from "@/components/geo/GeoAlertFeed";
 import AddDeviceModal from "../components/AddDeviceModal";
+// Local lightweight timestamp normalizer to avoid raw Firestore Timestamp leaks
+const toIsoLocal = (value: unknown): string => {
+  if (typeof value === "string") return value;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
+  if (typeof value === "number" && Number.isFinite(value)) return new Date(value).toISOString();
+  if (value && typeof (value as any).toDate === "function") {
+    const d = (value as any).toDate();
+    if (d instanceof Date && !Number.isNaN(d.getTime())) return d.toISOString();
+  }
+  const seconds = Number((value && (value as any).seconds) ?? NaN);
+  const nanoseconds = Number((value && (value as any).nanoseconds) ?? 0);
+  if (Number.isFinite(seconds)) return new Date(seconds * 1000 + Math.floor(nanoseconds / 1_000_000)).toISOString();
+  return "";
+};
 
 import {
   buildZoneInsights,
@@ -80,6 +94,7 @@ import {
   generateRandomReading,
   getLocalDeviceHistory,
   getLocalDevicesByOwner,
+  normalizeDeviceReading,
   removeLocalDevice,
   flushPendingDeviceOperations,
   queuePendingDeviceDelete,
@@ -319,11 +334,27 @@ export const UserDashboard = () => {
           );
 
           if (readingSnapshot.size > 0) {
-            const remoteHistory = readingSnapshot.docs.map(
-              (item) =>
-                item.data() as ReturnType<typeof getLocalDeviceHistory>[number],
+            const remoteHistory = readingSnapshot.docs.map((item) =>
+              normalizeDeviceReading(item.data() as Record<string, unknown>),
             );
-            setHistory(remoteHistory);
+
+            // Merge remote and local histories — prefer local entries (unsynced)
+            try {
+              const localHistory = getLocalDeviceHistory(selectedDevice.id);
+              const map = new Map<string, typeof remoteHistory[number]>();
+              // remote first, then local overwrites duplicates
+              remoteHistory.forEach((r) => map.set(r.timestamp, r));
+              localHistory.forEach((r) => map.set(r.timestamp, r));
+              const merged = Array.from(map.values()).sort((a, b) =>
+                (a.timestamp || "").localeCompare(b.timestamp || ""),
+              );
+              setHistory(merged.slice(-30));
+            } catch (err) {
+              // Fallback to remote if merge fails
+              console.warn("Failed to merge histories, using remote only", err);
+              setHistory(remoteHistory.slice(-30));
+            }
+
             return;
           }
         }
@@ -1158,7 +1189,8 @@ export const UserDashboard = () => {
             <ThemeToggle />
             <Button
               onClick={handleLogout}
-              className="premium-button flex items-center gap-2"
+              // className="premium-button flex items-center gap-2"
+              className="premium-button  inline-flex items-center justify-center rounded-full border border-slate-200 bg-white/90 p-2 text-slate-700 shadow-sm shadow-slate-900/10 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-200 dark:hover:bg-slate-800/80"
             >
               <LogOut className="w-4 h-4" />
               Logout
@@ -1794,14 +1826,6 @@ export const UserDashboard = () => {
                           </Button>
                         </div>
                       </div>
-
-                      <div className="mt-5">
-                        <StatusBanner
-                          status={latest?.status}
-                          updatedAt={latest?.timestamp}
-                          simulatorRunning={true}
-                        />
-                      </div>
                     </div>
 
                     {showDataPanel && (
@@ -1879,6 +1903,14 @@ export const UserDashboard = () => {
                         )}
                       </section>
                     )}
+
+                    <div className="mt-5">
+                        <StatusBanner
+                          status={latest?.status}
+                          updatedAt={latest?.timestamp}
+                          simulatorRunning={true}
+                        />
+                      </div>
 
                     <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                       <SensorCard
@@ -2131,7 +2163,10 @@ export const UserDashboard = () => {
                         </p>
                         <p className="mt-1 text-sm font-semibold text-slate-950 dark:text-white">
                           {latest?.timestamp
-                            ? new Date(latest.timestamp).toLocaleString()
+                            ? (() => {
+                                const iso = toIsoLocal(latest.timestamp);
+                                return iso ? new Date(iso).toLocaleString() : String(latest.timestamp);
+                              })()
                             : "Unknown"}
                         </p>
                       </div>
@@ -2206,10 +2241,13 @@ export const UserDashboard = () => {
                       <p className="mt-1 text-lg font-semibold text-slate-950 dark:text-white">
                         {selectedDevice?.name ?? "No device selected"}
                       </p>
-                      {latest ? (
+                          {latest ? (
                         <div className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-400">
                           <p>
-                            Time: {new Date(latest.timestamp).toLocaleString()}
+                            Time: {(() => {
+                              const iso = toIsoLocal(latest.timestamp);
+                              return iso ? new Date(iso).toLocaleString() : String(latest.timestamp);
+                            })()}
                           </p>
                           <p>pH: {latest.ph}</p>
                           <p>TDS: {latest.tds} ppm</p>
@@ -2490,7 +2528,7 @@ export const UserDashboard = () => {
                   <p className="text-slate-600 dark:text-slate-400">
                     User ID: {user?.uid}
                   </p>
-                  <div className="mt-4">
+                  <div className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white/90 p-2 text-slate-700 shadow-sm shadow-slate-900/10 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-200 dark:hover:bg-slate-800 ">
                     <Button onClick={handleLogout} className="bg-red-500">
                       Logout
                     </Button>

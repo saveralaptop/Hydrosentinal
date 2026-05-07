@@ -10,7 +10,7 @@ export const ThemeToggle = () => {
       type="button"
       onClick={toggleTheme}
       title={`Switch to ${isDark ? "light" : "dark"} mode`}
-      className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white/90 px-3 py-2 text-sm font-semibold text-slate-900 shadow-sm shadow-slate-900/10 transition hover:bg-white dark:border-slate-700 dark:bg-slate-950/80 dark:text-slate-100 dark:shadow-none dark:hover:bg-slate-900"
+      className="premium-button  inline-flex items-center justify-center rounded-full border border-slate-200 bg-white/90 p-2 text-slate-700 shadow-sm shadow-slate-900/10 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-200 dark:hover:bg-slate-800/80"
     >
       {isDark ? (
         <Sun className="h-4 w-4 text-amber-400" />

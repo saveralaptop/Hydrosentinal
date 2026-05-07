@@ -1,4 +1,5 @@
 import React from "react";
+import { toIsoTimestamp } from "@/lib/deviceStore";
 import { motion } from "framer-motion";
 import { AlertLevel, WaterAlert, WATER_THRESHOLDS } from "@/services/alertService";
 import { Clock, AlertCircle, CheckCircle } from "lucide-react";
@@ -36,10 +37,12 @@ export const AlertPanel: React.FC<AlertPanelProps> = ({
     }
   };
 
-  const formatTime = (timestamp: number): string => {
-    const date = new Date(timestamp);
+  const formatTime = (timestampValue: unknown): string => {
+    const iso = toIsoTimestamp(timestampValue);
+    const date = iso ? new Date(iso) : (typeof timestampValue === 'number' ? new Date(timestampValue) : new Date(String(timestampValue)));
     const now = new Date();
-    const diffMs = now.getTime() - timestamp;
+    const time = date.getTime();
+    const diffMs = now.getTime() - time;
     const diffMins = Math.floor(diffMs / 60000);
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);

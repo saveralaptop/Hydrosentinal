@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { toIsoTimestamp } from "@/lib/deviceStore";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { motion } from "framer-motion";
@@ -52,6 +53,7 @@ import {
   getLocalDevicesByOwner,
   removeLocalDevice,
   readLocalDevices,
+  normalizeDeviceReading,
   upsertLocalDevice,
 } from "@/lib/deviceStore";
 
@@ -104,11 +106,12 @@ const LOCAL_ACCOUNTS_KEY = "hydrosentinel.localAccounts";
 
 const DEMO_ACCOUNT_EMAILS = new Set(["user@demo.com", "admin@demo.com"]);
 
-const formatDate = (value?: string) => {
+const formatDate = (value?: unknown) => {
   if (!value) return "-";
 
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  const iso = toIsoTimestamp(value);
+  const date = iso ? new Date(iso) : new Date(String(value));
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 };
 
 const mergeById = <T extends { id: string }>(primary: T[], fallback: T[]) => {
@@ -470,7 +473,9 @@ export const AdminPanel = () => {
     const unsubscribeReadings = onSnapshot(
       readingsRef,
       (snapshot) => {
-        const readings = snapshot.docs.map((item) => item.data() as DeviceReading);
+        const readings = snapshot.docs.map((item) =>
+          normalizeDeviceReading(item.data() as Record<string, unknown>),
+        );
         console.debug("[AdminPanel] selected device history snapshot", {
           deviceId: selectedDevice.id,
           ownerUid: selectedDevice.ownerUid,
@@ -748,7 +753,9 @@ export const AdminPanel = () => {
       return onSnapshot(
         readingsRef,
         (snapshot) => {
-          const readings = snapshot.docs.map((item) => item.data() as DeviceReading);
+          const readings = snapshot.docs.map((item) =>
+            normalizeDeviceReading(item.data() as Record<string, unknown>),
+          );
           console.debug("[AdminPanel] realtime data panel reading update", {
             deviceId: device.id,
             ownerUid: device.ownerUid,
@@ -1106,7 +1113,10 @@ export const AdminPanel = () => {
                                         {readings.map((reading, index) => (
                                           <tr key={`${device.id}-${reading.timestamp}-${index}`}>
                                             <td className="px-4 py-3">{index + 1}</td>
-                                            <td className="px-4 py-3">{new Date(reading.timestamp).toLocaleString()}</td>
+                                            <td className="px-4 py-3">{(() => {
+                                                const iso = toIsoTimestamp(reading.timestamp);
+                                                return iso ? new Date(iso).toLocaleString() : String(reading.timestamp);
+                                              })()}</td>
                                             <td className="px-4 py-3">{reading.ph}</td>
                                             <td className="px-4 py-3">{reading.tds}</td>
                                             <td className="px-4 py-3">{reading.turbidity}</td>

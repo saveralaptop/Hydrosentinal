@@ -43,6 +43,74 @@ export type DeviceReadingInput = Omit<DeviceReading, "timestamp"> & {
   timestamp?: string;
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const toFiniteNumber = (value: unknown, fallback: number) => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+export const toIsoTimestamp = (value: unknown): string => {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString();
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return new Date(value).toISOString();
+  }
+
+  if (isRecord(value)) {
+    if (typeof value.toDate === "function") {
+      const date = value.toDate();
+      if (date instanceof Date && !Number.isNaN(date.getTime())) {
+        return date.toISOString();
+      }
+    }
+
+    const seconds = toFiniteNumber(value.seconds ?? value._seconds, NaN);
+    const nanoseconds = toFiniteNumber(value.nanoseconds ?? value._nanoseconds, 0);
+
+    if (Number.isFinite(seconds)) {
+      return new Date(seconds * 1000 + Math.floor(nanoseconds / 1_000_000)).toISOString();
+    }
+  }
+
+  return "";
+};
+
+export const normalizeDeviceReading = (
+  reading?: Partial<DeviceReading> & Record<string, unknown>,
+): DeviceReading => {
+  const timestamp = toIsoTimestamp(reading?.timestamp ?? reading?.createdAt ?? reading?.time);
+  const ph = toFiniteNumber(reading?.ph, 0);
+  const tds = toFiniteNumber(reading?.tds, 0);
+  const turbidity = toFiniteNumber(reading?.turbidity, 0);
+  const temperature = toFiniteNumber(reading?.temperature, 0);
+  const safe = ph >= 6.5 && ph <= 8.5 && tds <= 1000 && turbidity <= 25;
+
+  return {
+    timestamp,
+    ph,
+    tds,
+    turbidity,
+    temperature,
+    status: reading?.status === "SAFE" || reading?.status === "NOT SAFE"
+      ? reading.status
+      : safe
+        ? "SAFE"
+        : "NOT SAFE",
+  };
+};
+
 const randomRange = (min: number, max: number, decimals = 1) => {
   const value = min + Math.random() * (max - min);
   return Number(value.toFixed(decimals));
@@ -133,7 +201,18 @@ const readHistoryMap = (): Record<string, DeviceReading[]> => {
       return seed;
     }
 
-    return JSON.parse(rawHistory) as Record<string, DeviceReading[]>;
+    const parsed = JSON.parse(rawHistory) as Record<string, unknown>;
+
+    return Object.fromEntries(
+      Object.entries(parsed).map(([deviceId, readings]) => [
+        deviceId,
+        Array.isArray(readings)
+          ? readings.map((reading) =>
+              normalizeDeviceReading(reading as Partial<DeviceReading> & Record<string, unknown>),
+            )
+          : [],
+      ]),
+    ) as Record<string, DeviceReading[]>;
   } catch {
     return {};
   }
@@ -197,13 +276,20 @@ export const getLocalDeviceHistory = (deviceId: string): DeviceReading[] => {
     saveHistoryMap(historyMap);
   }
 
-  return historyMap[deviceId];
+  const normalizedHistory = historyMap[deviceId].map((reading) => normalizeDeviceReading(reading));
+  historyMap[deviceId] = normalizedHistory;
+  saveHistoryMap(historyMap);
+
+  return normalizedHistory;
 };
 
-export const appendLocalDeviceReading = (deviceId: string, reading?: DeviceReading) => {
+export const appendLocalDeviceReading = (
+  deviceId: string,
+  reading?: Partial<DeviceReading> & Record<string, unknown>,
+) => {
   const historyMap = readHistoryMap();
   const current = historyMap[deviceId] ?? [];
-  const nextReading = reading ?? generateRandomReading();
+  const nextReading = reading ? normalizeDeviceReading(reading) : generateRandomReading();
   historyMap[deviceId] = [...current, nextReading].slice(-30);
   saveHistoryMap(historyMap);
   return historyMap[deviceId];

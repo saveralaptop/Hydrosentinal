@@ -12,7 +12,7 @@ import {
   RotateCcw,
   Zap,
 } from "lucide-react";
-import { readPendingDeviceOperations, flushPendingDeviceOperations } from "@/lib/deviceStore";
+import { readPendingDeviceOperations, flushPendingDeviceOperations, toIsoTimestamp } from "@/lib/deviceStore";
 import { flushPendingSignups, getSyncSnapshot, subscribeSyncSnapshot } from "@/lib/syncEngine";
 import { useToast } from "@/hooks/use-toast";
 
@@ -42,7 +42,8 @@ export const SyncMonitor: React.FC<{ userId?: string }> = ({ userId }) => {
 
   useEffect(() => {
     if (syncSnapshot.lastSyncAt) {
-      setLastSyncTime(new Date(syncSnapshot.lastSyncAt).toLocaleTimeString());
+      const iso = toIsoTimestamp(syncSnapshot.lastSyncAt);
+      setLastSyncTime(iso ? new Date(iso).toLocaleTimeString() : String(syncSnapshot.lastSyncAt));
     }
   }, [syncSnapshot.lastSyncAt]);
 
@@ -58,7 +59,14 @@ export const SyncMonitor: React.FC<{ userId?: string }> = ({ userId }) => {
               id: `${op.type}-${op.deviceId || "unknown"}`,
               type: op.type === "delete" ? "device_delete" : "device_upsert",
               description: `Device ${op.type === "delete" ? "delete" : "upsert"}: ${op.deviceId}`,
-              timestamp: new Date(op.queuedAt).toLocaleTimeString(),
+              timestamp: (() => {
+                const iso = toIsoTimestamp(op.queuedAt);
+                try {
+                  return iso ? new Date(iso).toLocaleTimeString() : String(op.queuedAt);
+                } catch {
+                  return String(op.queuedAt);
+                }
+              })(),
               retries: op.retries || 0,
             })),
         ];
