@@ -30,6 +30,7 @@ import { GeoAlertFeed } from "@/components/geo/GeoAlertFeed";
 import { LiveDeviceMap } from "@/components/geo/LiveDeviceMap";
 import { DeviceDetailPopup } from "@/components/geo/DeviceDetailPopup";
 import AddDeviceModal from "../components/AddDeviceModal";
+import HelpSupportSection from "@/components/HelpSupportSection";
 // Local lightweight timestamp normalizer to avoid raw Firestore Timestamp leaks
 const toIsoLocal = (value: unknown): string => {
   if (typeof value === "string") return value;
@@ -70,7 +71,6 @@ import {
   FileBarChart2,
   UserRound,
   Settings,
-  MessageSquare,
   HelpCircle,
   Bell,
   AlertTriangle,
@@ -1579,7 +1579,6 @@ export const UserDashboard = () => {
                   { label: "Reports", icon: FileBarChart2, tab: "Reports" },
                   { label: "Profile", icon: UserRound, tab: "Profile" },
                   { label: "Settings", icon: Settings, tab: "Settings" },
-                  { label: "Feedback", icon: MessageSquare, tab: "Help" },
                   { label: "Help", icon: HelpCircle, tab: "Help" },
                 ].map(({ label, icon: Icon, tab }) => {
                   const active =
@@ -2611,19 +2610,19 @@ export const UserDashboard = () => {
                   exit={{ opacity: 0, y: -14 }}
                   transition={{ duration: 0.22 }}
                 >
-                  <h3 className="text-2xl font-black text-slate-950 dark:text-white">
-                    Profile
-                  </h3>
-                  <p className="mt-2 text-slate-600 dark:text-slate-400">
-                    Email: {user?.email}
-                  </p>
-                  <p className="text-slate-600 dark:text-slate-400">
-                    User ID: {user?.uid}
-                  </p>
-                  <div className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white/90 p-2 text-slate-700 shadow-sm shadow-slate-900/10 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-200 dark:hover:bg-slate-800 ">
-                    <Button onClick={handleLogout} className="bg-red-500">
-                      Logout
-                    </Button>
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <h3 className="text-2xl font-bold text-slate-950 dark:text-white mb-2">
+                      Smart Profile Center
+                    </h3>
+                    <p className="text-slate-600 dark:text-slate-400 mb-6">
+                      Experience our premium profile management system
+                    </p>
+                    <button
+                      onClick={() => navigate("/profile")}
+                      className="px-6 py-3 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-semibold hover:shadow-lg hover:shadow-cyan-500/50 transition"
+                    >
+                      Open Full Profile →
+                    </button>
                   </div>
                 </motion.section>
               )}
@@ -2673,15 +2672,7 @@ export const UserDashboard = () => {
                   exit={{ opacity: 0, y: -14 }}
                   transition={{ duration: 0.22 }}
                 >
-                  <h3 className="text-2xl font-black text-slate-950 dark:text-white">
-                    Help
-                  </h3>
-                  <p className="mt-2 text-slate-600 dark:text-slate-400">
-                    This dashboard runs in simulator-only mode by default and
-                    uses generated readings. Use the Start/Stop buttons to run
-                    the simulator and the Charts/AI/Cloud tabs to explore
-                    features.
-                  </p>
+                  <HelpSupportSection />
                 </motion.section>
               )}
             </AnimatePresence>

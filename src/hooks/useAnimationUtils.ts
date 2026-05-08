@@ -114,7 +114,7 @@ export const getFadeSlideUpVariants = () => ({
  */
 export type TiltIntensity = 'none' | 'small' | 'normal' | 'hero';
 
-export const get3DCardVariants = (intensity: TiltIntensity = 'normal') => {
+export const get3DCardVariants = (intensity: TiltIntensity = 'normal'): any => {
   // intensity presets
   const presets: Record<TiltIntensity, { rotateX: number; rotateY: number; scale: number; stiffness: number; damping: number; duration: number }> = {
     none: { rotateX: 0, rotateY: 0, scale: 1, stiffness: 300, damping: 30, duration: 0.12 },
@@ -136,7 +136,7 @@ export const get3DCardVariants = (intensity: TiltIntensity = 'normal') => {
       scale: p.scale,
       transition: {
         duration: p.duration,
-        type: 'spring',
+        type: 'spring' as const,
         stiffness: p.stiffness,
         damping: p.damping,
       },

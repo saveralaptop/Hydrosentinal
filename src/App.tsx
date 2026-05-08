@@ -16,6 +16,8 @@ const Login = lazy(() => import("./pages/Login.tsx"));
 const Index = lazy(() => import("./pages/Index.tsx"));
 const UserDashboard = lazy(() => import("./pages/UserDashboard.tsx"));
 const AdminPanel = lazy(() => import("./pages/AdminPanel.tsx"));
+const Help = lazy(() => import("./pages/Help.tsx"));
+const Profile = lazy(() => import("./pages/Profile.tsx"));
 
 const queryClient = new QueryClient();
 
@@ -104,6 +106,24 @@ const AppRoutes = () => {
           element={
             <ProtectedRoute requiredRole="user">
               <UserDashboard />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/help"
+          element={
+            <ProtectedRoute requiredRole="user">
+              <Help />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/profile"
+          element={
+            <ProtectedRoute requiredRole="user">
+              <Profile />
             </ProtectedRoute>
           }
         />
